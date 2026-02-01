@@ -1,0 +1,47 @@
+# piec_path_optimizer/config/optimizer_params.yaml
+ros__parameters:
+  # PINN Integration Parameters
+  use_pinn_predictions: true
+  pinn_weight: 0.7
+  pinn_service_name: '/pinn_service/evaluate_trajectory'
+  pinn_timeout: 2.0
+  pinn_retry_count: 3
+  
+  # NSGA-II Parameters
+  population_size: 20
+  generations: 8
+  crossover_rate: 0.8
+  mutation_rate: 0.15
+  
+  # Objective weights for 7 objectives
+  objective_weights: [0.15, 0.1, 0.15, 0.1, 0.1, 0.25, 0.15]
+  # Index: 0: length, 1: curvature, 2: obstacle, 3: uncertainty, 
+  #        4: deviation, 5: pinn_energy, 6: pinn_stability
+  
+  # Path Generation
+  goal_topic: '/goal_pose'
+  waypoint_count: 10
+  max_curvature: 1.5
+  path_smoothing: true
+  adaptive_sampling: true
+  
+  # Scout Mini Parameters
+  robot_radius: 0.3
+  min_turn_radius: 0.4
+  max_linear_vel: 1.2
+  max_angular_vel: 0.8
+  
+  # Optimization
+  optimization_timeout: 2.0
+  planning_rate: 1.0
+  use_multithreading: true
+  max_workers: 4
+  
+  # Debug
+  debug_mode: true
+  log_fitness: true
+  visualize_paths: false
+  
+  # Goal completion
+  goal_completion_distance: 0.3
+  goal_position_threshold: 0.1
