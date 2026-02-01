@@ -1,0 +1,18 @@
+common:
+  msg_source: 1
+  send_packet_ros: false
+  send_point_cloud_ros: true
+
+lidar:
+  - driver:
+      lidar_type: RSHELIOS
+      msop_port: 6699
+      difop_port: 7788
+      host_address: 192.168.1.102
+      wait_for_difop: false
+      use_lidar_clock: false
+      min_distance: 0.2
+      max_distance: 200
+    ros:
+      ros_frame_id: rslidar
+      ros_send_point_cloud_topic: /rslidar_points
