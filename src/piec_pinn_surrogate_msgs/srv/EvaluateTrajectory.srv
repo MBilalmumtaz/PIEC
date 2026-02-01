@@ -1,0 +1,7 @@
+float64[] xs
+float64[] ys
+float64[] yaws
+float64[] velocities
+---
+float64 energy
+float64 stability

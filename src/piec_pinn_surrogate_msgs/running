@@ -1,0 +1,45 @@
+ source install/setup.bash
+ros2 launch piec_bringup piec_real_robot.launch.py
+
+ source install/setup.bash
+ ros2 run piec_controller controller_node
+
+
+  source install/setup.bash
+  ros2 run piec_path_optimizer complete_path_optimizer
+
+
+   source install/setup.bash
+   ros2 run piec_pinn_surrogate pinn_service
+
+
+    source install/setup.bash
+
+lidar reset:
+# Bring interface up
+sudo ip link set enp0s31f6 up
+
+# Assign IP address (you said earlier it was 192.168.1.102)
+sudo ip addr add 192.168.1.102/24 dev enp0s31f6
+
+# Verify
+ip addr show enp0s31f6
+ip link show enp0s31f6
+
+
+
+robot base setting;
+# Bring up CAN interface with correct bitrate
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can0 up
+
+# Check status
+ip -details link show can0
+
+# Test if CAN is working
+timeout 2 sudo candump can0 &
+sleep 1
+cansend can0 123#11223344
+
+
