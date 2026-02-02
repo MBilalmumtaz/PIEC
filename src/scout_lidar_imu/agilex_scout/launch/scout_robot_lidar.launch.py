@@ -35,7 +35,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_imu',
             default_value='true',
-            description='Enable FDILink AHRS IMU'
+            description='Enable OpenZen IMU (LPMS IG1 CAN)'
         ),
         DeclareLaunchArgument(
             'use_base',
@@ -152,31 +152,23 @@ def generate_launch_description():
     ld.add_action(rslidar_node)
     
     # ------------------------------------------------------------------
-    # 5. FDILINK AHRS IMU DRIVER (Wheeltec N100)
+    # 5. OPENZEN IMU DRIVER (LPMS IG1 CAN)
     # ------------------------------------------------------------------
-    fdilink_imu_node = Node(
-        package='fdilink_ahrs',
-        executable='ahrs_driver_node',
-        name='fdilink_imu_driver',
+    openzen_imu_node = Node(
+        package='openzen_driver',
+        executable='openzen_node',
+        name='openzen_imu_driver',
+        namespace='openzen',
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'serial_port_': '/dev/ttyUSB0',
-            'serial_baud_': 921600,
-            'device_type_': 1,
-            'imu_frame_id_': 'imu_link',
-            'imu_topic': '/imu_raw',
-            #'Euler_angles_topic': '/euler_angles',
-            #'Magnetic_topic': '/magnetic',
-            #'mag_pose_2d_topic': '/mag_pose_2d',
-            #'gps_topic': '/gps/fix',
-            #'twist_topic': '/system_speed',
-           # 'NED_odom_topic': '/NED_odometry',
-            'if_debug_': False,
+            'sensor_name': '',  # Empty string means auto-detect first sensor
+            'baudrate': 115200,  # Default baudrate for LPMS IG1
+            'frame_id': 'imu_link',
         }],
         condition=IfCondition(use_imu)
     )
-    ld.add_action(fdilink_imu_node)
+    ld.add_action(openzen_imu_node)
     
     # ------------------------------------------------------------------
     # 6. MAGNETOMETER CONVERTER (Must come BEFORE IMU filter)
@@ -188,8 +180,8 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
-            'scale_factor': 1.0e-6,  # Convert μT to Tesla
-            'input_topic': '/magnetic',
+            'scale_factor': 1.0,  # OpenZen already outputs in Tesla
+            'input_topic': '/openzen/mag',  # CHANGED: from /magnetic to /openzen/mag
             'output_topic': '/magnetic_field',
             'frame_id': 'imu_link',
         }],
@@ -203,7 +195,7 @@ def generate_launch_description():
     imu_filter_node = Node(
         package='imu_filter_madgwick',
         executable='imu_filter_madgwick_node',
-        name='scout_imu_filter',  # CHANGED: Unique name to avoid conflicts
+        name='scout_imu_filter',
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
@@ -221,8 +213,8 @@ def generate_launch_description():
             'remove_gravity_vector': True,
         }],
         remappings=[
-            ('/imu/data_raw', '/imu_raw'),
-            ('/imu/data', '/imu'),  # Publishes to /imu
+            ('/imu/data_raw', '/openzen/data'),  # CHANGED: from /imu_raw to /openzen/data
+            ('/imu/data', '/imu'),
             ('/imu/mag', '/magnetic_field'),
         ],
         condition=IfCondition(use_imu)
