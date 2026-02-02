@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Test magnetometer-enhanced IMU for drift
-"""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
@@ -19,7 +16,7 @@ class TestMagIMU(Node):
         self.yaw_samples = []
         self.test_duration = 30.0
         
-        self.get_logger().info("🧪 Testing Magnetometer-Enhanced IMU")
+        self.get_logger().info("🧪 Testing LPMS IG1 IMU with Magnetometer")
         self.get_logger().info(f"Keep robot stationary for {self.test_duration} seconds")
         self.get_logger().info("Checking for yaw drift...")
         
@@ -64,23 +61,20 @@ class TestMagIMU(Node):
     
     def analyze_drift(self):
         if len(self.yaw_samples) < 2:
-            self.get_logger().error("Not enough samples!")
+            self.get_logger().error("❌ Not enough samples collected!")
             return
         
-        times = [t for t, _ in self.yaw_samples]
-        yaws = [y for _, y in self.yaw_samples]
+        start_time, start_yaw = self.yaw_samples[0]
+        end_time, end_yaw = self.yaw_samples[-1]
         
-        start_yaw = yaws[0]
-        end_yaw = yaws[-1]
+        duration = end_time - start_time
         total_drift = end_yaw - start_yaw
-        total_time = times[-1] - times[0]
-        
-        drift_rate = total_drift / total_time if total_time > 0 else 0
+        drift_rate = total_drift / duration if duration > 0 else 0
         
         self.get_logger().info("\n" + "="*60)
-        self.get_logger().info("🧪 MAGNETOMETER DRIFT TEST RESULTS")
-        self.get_logger().info("="*60)
-        self.get_logger().info(f"Test duration: {total_time:.1f} seconds")
+        self.get_logger().info("LPMS IG1 IMU DRIFT TEST RESULTS:")
+        self.get_logger().info(f"Duration: {duration:.1f}s")
+        self.get_logger().info(f"Samples: {len(self.yaw_samples)}")
         self.get_logger().info(f"Start yaw: {math.degrees(start_yaw):.2f}°")
         self.get_logger().info(f"End yaw: {math.degrees(end_yaw):.2f}°")
         self.get_logger().info(f"Total drift: {math.degrees(total_drift):.2f}°")
@@ -93,7 +87,7 @@ class TestMagIMU(Node):
         elif abs(drift_rate) < 0.1:  # < 5.7 °/s
             self.get_logger().info("⚠️  ACCEPTABLE: Some drift, but much better than gyro-only.")
         else:
-            self.get_logger().info("❌ POOR: Magnetometer not working properly. Check calibration.")
+            self.get_logger().error("❌ HIGH DRIFT: Check magnetometer calibration!")
 
 def main():
     rclpy.init()

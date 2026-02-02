@@ -1,101 +1,67 @@
 #!/usr/bin/env python3
-"""
-Check IMU orientation and calculate correct transform
-"""
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
-from geometry_msgs.msg import Quaternion
 import math
-import numpy as np
 
 class IMUOrientationChecker(Node):
     def __init__(self):
         super().__init__('imu_orientation_checker')
         
-        self.imu_sub = self.create_subscription(Imu, '/imu', self.imu_callback, 10)
-        self.imu_raw_sub = self.create_subscription(Imu, '/imu_raw', self.imu_raw_callback, 10)
+        # Subscribe to OpenZen raw and filtered IMU
+        self.create_subscription(Imu, '/openzen/data', self.openzen_callback, 10)
+        self.create_subscription(Imu, '/imu', self.imu_callback, 10)
         
+        self.openzen_orientation = None
         self.imu_orientation = None
-        self.imu_raw_orientation = None
         self.sample_count = 0
         
         self.timer = self.create_timer(1.0, self.print_orientation)
         
-    def quat_to_rpy(self, q):
-        """Convert quaternion to roll, pitch, yaw"""
-        # Normalize
-        norm = math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w)
-        if norm < 0.0001:
-            return 0.0, 0.0, 0.0
-        
-        x = q.x / norm
-        y = q.y / norm
-        z = q.z / norm
-        w = q.w / norm
-        
+        self.get_logger().info("🧭 IMU Orientation Checker (OpenZen)")
+        self.get_logger().info("Monitoring /openzen/data (raw) and /imu (filtered)")
+    
+    def quat_to_euler(self, q):
+        """Convert quaternion to roll, pitch, yaw in degrees"""
         # Roll (x-axis rotation)
-        sinr_cosp = 2.0 * (w * x + y * z)
-        cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+        sinr_cosp = 2.0 * (q.w * q.x + q.y * q.z)
+        cosr_cosp = 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
         roll = math.atan2(sinr_cosp, cosr_cosp)
         
         # Pitch (y-axis rotation)
-        sinp = 2.0 * (w * y - z * x)
-        if abs(sinp) >= 1:
-            pitch = math.copysign(math.pi / 2, sinp)
-        else:
-            pitch = math.asin(sinp)
+        sinp = 2.0 * (q.w * q.y - q.z * q.x)
+        pitch = math.asin(max(-1.0, min(1.0, sinp)))
         
         # Yaw (z-axis rotation)
-        siny_cosp = 2.0 * (w * z + x * y)
-        cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         yaw = math.atan2(siny_cosp, cosy_cosp)
         
-        return roll, pitch, yaw
+        return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
+    
+    def openzen_callback(self, msg):
+        self.openzen_orientation = msg.orientation
     
     def imu_callback(self, msg):
         self.imu_orientation = msg.orientation
-        self.sample_count += 1
-    
-    def imu_raw_callback(self, msg):
-        self.imu_raw_orientation = msg.orientation
     
     def print_orientation(self):
-        if self.imu_orientation is not None:
-            roll, pitch, yaw = self.quat_to_rpy(self.imu_orientation)
+        self.sample_count += 1
+        
+        if self.openzen_orientation and self.imu_orientation:
+            raw_roll, raw_pitch, raw_yaw = self.quat_to_euler(self.openzen_orientation)
+            filt_roll, filt_pitch, filt_yaw = self.quat_to_euler(self.imu_orientation)
             
-            self.get_logger().info("="*60)
-            self.get_logger().info(f"📊 IMU Orientation (Sample #{self.sample_count})")
-            self.get_logger().info(f"  Quaternion: x={self.imu_orientation.x:.4f}, y={self.imu_orientation.y:.4f}, "
-                                  f"z={self.imu_orientation.z:.4f}, w={self.imu_orientation.w:.4f}")
-            self.get_logger().info(f"  Roll:  {math.degrees(roll):7.1f}°")
-            self.get_logger().info(f"  Pitch: {math.degrees(pitch):7.1f}°")
-            self.get_logger().info(f"  Yaw:   {math.degrees(yaw):7.1f}°")
-            
-            # Expected: When robot faces forward (X-axis forward), yaw should be 0°
-            # If yaw is 180°, IMU is backwards
-            # If yaw is 90°, IMU is rotated 90° clockwise
-            # If yaw is -90°, IMU is rotated 90° counter-clockwise
-            
-            if abs(yaw - 0.0) < 0.1:  # ±5.7°
-                self.get_logger().info("✅ IMU orientation is CORRECT (facing forward)")
-            elif abs(yaw - math.pi) < 0.1:  # 180° ±5.7°
-                self.get_logger().info("❌ IMU is BACKWARDS (rotated 180°)")
-                self.get_logger().info("   Fix: Rotate 180° around Z axis")
-            elif abs(yaw - math.pi/2) < 0.1:  # 90° ±5.7°
-                self.get_logger().info("❌ IMU is SIDEWAYS (rotated 90° clockwise)")
-                self.get_logger().info("   Fix: Rotate -90° around Z axis")
-            elif abs(yaw + math.pi/2) < 0.1:  # -90° ±5.7°
-                self.get_logger().info("❌ IMU is SIDEWAYS (rotated 90° counter-clockwise)")
-                self.get_logger().info("   Fix: Rotate 90° around Z axis")
-            else:
-                self.get_logger().info(f"⚠️  IMU is rotated by {math.degrees(yaw):.1f}°")
-            
-            # Also check pitch and roll
-            if abs(pitch) > 0.5:  # > 28.6°
-                self.get_logger().warn(f"⚠️  IMU may be tilted: Pitch = {math.degrees(pitch):.1f}°")
-            if abs(roll) > 0.5:  # > 28.6°
-                self.get_logger().warn(f"⚠️  IMU may be tilted: Roll = {math.degrees(roll):.1f}°")
+            self.get_logger().info(f"\n{'='*70}")
+            self.get_logger().info(f"Sample #{self.sample_count}")
+            self.get_logger().info(f"  RAW  (/openzen/data): Roll={raw_roll:7.2f}°  Pitch={raw_pitch:7.2f}°  Yaw={raw_yaw:7.2f}°")
+            self.get_logger().info(f"  FILT (/imu):          Roll={filt_roll:7.2f}°  Pitch={filt_pitch:7.2f}°  Yaw={filt_yaw:7.2f}°")
+        elif self.openzen_orientation:
+            self.get_logger().warn("⚠️  Only raw data available")
+        elif self.imu_orientation:
+            self.get_logger().warn("⚠️  Only filtered data available")
+        else:
+            self.get_logger().warn("❌ No IMU data received yet")
 
 def main():
     rclpy.init()

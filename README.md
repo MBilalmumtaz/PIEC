@@ -50,35 +50,30 @@ sudo ip link set can0 up 2>/dev/null
 echo "8. Checking CAN status..."
 ip -details link show can0
 
-#IMU (LPMS IG1 CAN)
-# Kill any existing ROS nodes
-ros2 daemon stop
-ros2 daemon start
+# LPMS IG1 CAN IMU Setup
 
-# Check if device exists
-ls -la /dev/ttyUSB*
+## Initial Setup (One-time)
+# Add user to dialout group for serial port access
+sudo usermod -a -G dialout $USER
+# Logout and login again for changes to take effect
 
-# Check if any process is using the serial port
-sudo lsof /dev/ttyUSB0
-sudo fuser -v /dev/ttyUSB0
+## Temporary Permission Fix (if needed)
+sudo chmod 666 /dev/ttyUSB0
 
-# Kill any processes using the port
-sudo pkill -9 screen
-sudo pkill -9 minicom
-sudo fuser -k /dev/ttyUSB0
+## Start the OpenZen IMU driver
+ros2 run openzen_driver openzen_node --ros-args --remap __ns:=/openzen
 
-# LPMS IG1 CAN IMU
-# Start the OpenZen IMU driver
-ros2 run openzen_driver openzen_node --ros-args -r __ns:=/openzen
-
-# Check IMU data
+## Check IMU data
 ros2 topic echo /openzen/data --no-arr
-
-# Check magnetometer data
 ros2 topic echo /openzen/mag --no-arr
-
-# Check publishing rate
 ros2 topic hz /openzen/data
+
+## Run diagnostics
+python3 diagnose_imu.py
+python3 check_imu_orientation.py
+python3 test_mag_imu.py
+python3 test_magnetometer.py
+
 # Set CAN parameters
 sudo ip link set can0 down
 sudo ip link set can0 type can bitrate 500000
