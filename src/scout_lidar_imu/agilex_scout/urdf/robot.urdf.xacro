@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<robot name="scout_mini" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- odometry source: world ground truth or wheels encoders -->
+  <xacro:arg name="odometry_source" default="ground_truth" />
+  <xacro:arg name="load_gazebo" default="true" />
+  <xacro:arg name="simulation" default="true" />
+  <xacro:arg name="lidar_type" default="3d" />
+
+  <!-- base robot -->
+  <xacro:include filename="$(find agilex_scout)/urdf/mobile_robot/scout_mini.urdf.xacro" />
+  <xacro:scout_mini odometry_source="$(arg odometry_source)" load_gazebo="$(arg load_gazebo)" lidar_type="$(arg lidar_type)" />
+
+  <!-- ********  ALWAYS include the LiDAR + IMU  ******** -->
+  <xacro:include filename="$(find agilex_scout)/urdf/sensors/os1.urdf" />
+
+  <joint name="os1_joint" type="fixed">
+    <origin xyz="0.1 0.0 0.32" rpy="0.0 0.0 0.0" />
+    <!-- Adjusted for Scout Mini's smaller size -->
+    <parent link="mobile_robot_base_link" />
+    <child link="os_sensor" />
+  </joint>
+
+  <!-- if you still need real-robot specific stuff keep it here -->
+  <xacro:unless value="$(arg simulation)">
+    <!-- e.g. realsense, gps, etc. -->
+  </xacro:unless>
+
+</robot>

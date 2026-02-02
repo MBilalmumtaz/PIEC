@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="scout_wheel">
+
+  <xacro:macro name="scout_mini_wheel_1" params="wheel_prefix load_gazebo *joint_pose">
+    <link name="${wheel_prefix}_wheel_link">
+      <inertial>
+        <mass value="3" />
+        <origin xyz="0 0 0" />
+        <inertia ixx="0.7171" ixy="0" ixz="0" iyy="0.7171" iyz="0" izz="0.1361" />
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/wheel.dae" />
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <geometry>
+          <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/wheel.dae" />
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- if gazebo is loaded, simulate the robot wheel rotations and broadcast the joint states-->
+    <xacro:if value="${load_gazebo}">
+      <joint name="${wheel_prefix}_wheel" type="continuous">
+        <parent link="mobile_robot_base_link" />
+        <child link="${wheel_prefix}_wheel_link" />
+        <xacro:insert_block name="joint_pose"/>
+        <axis xyz="0 0 1" rpy="0 0 0" />
+        <dynamics damping="0.0" friction="20" />
+      </joint>
+    </xacro:if>
+
+    <!-- if real robot is loaded, fixed wheels are used because no joint broadcasters are available -->
+    <xacro:unless value="${load_gazebo}">
+      <joint name="${wheel_prefix}_wheel" type="fixed">
+        <parent link="mobile_robot_base_link" />
+        <child link="${wheel_prefix}_wheel_link" />
+        <xacro:insert_block name="joint_pose"/>
+        <axis xyz="0 0 -1" rpy="0 0 0" />
+      </joint>
+    </xacro:unless>
+    
+  </xacro:macro>
+
+</robot>
