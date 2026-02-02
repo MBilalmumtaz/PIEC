@@ -158,6 +158,7 @@ def generate_launch_description():
         package='openzen_driver',
         executable='openzen_node',
         name='openzen_imu_driver',
+        namespace='openzen',
         output='screen',
         parameters=[{
             'use_sim_time': use_sim_time,
@@ -165,9 +166,6 @@ def generate_launch_description():
             'baudrate': 115200,  # Default baudrate for LPMS IG1
             'frame_id': 'imu_link',
         }],
-        remappings=[
-            ('__ns', '/openzen'),  # Namespace for OpenZen topics
-        ],
         condition=IfCondition(use_imu)
     )
     ld.add_action(openzen_imu_node)
