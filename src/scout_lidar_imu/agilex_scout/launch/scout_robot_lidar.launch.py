@@ -163,7 +163,7 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': use_sim_time,
             'sensor_name': '',  # Empty string means auto-detect first sensor
-            'baudrate': 115200,  # Default baudrate for LPMS IG1
+            'baudrate': 0,  # Use 0 for auto-detect; OpenZen selects appropriate rate for the sensor
             'frame_id': 'imu_link',
         }],
         condition=IfCondition(use_imu)

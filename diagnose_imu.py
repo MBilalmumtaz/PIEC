@@ -61,6 +61,8 @@ class IMUDiagnostic(Node):
                 self.get_logger().info("1. Check permissions: sudo chmod 666 /dev/ttyUSB0")
                 self.get_logger().info("2. Check if driver is running: ros2 node list | grep openzen")
                 self.get_logger().info("3. Check device: ls -la /dev/ttyUSB*")
+                self.get_logger().info("4. Verify baud rate: OpenZen uses 921600 by default (set baudrate=0 in launch)")
+                self.get_logger().info("5. Add user to dialout group: sudo usermod -a -G dialout $USER")
             
             self.destroy_node()
             rclpy.shutdown()
