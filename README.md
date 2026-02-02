@@ -61,7 +61,7 @@ sudo usermod -a -G dialout $USER
 sudo chmod 666 /dev/ttyUSB0
 
 ## Start the OpenZen IMU driver
-ros2 run openzen_driver openzen_node --ros-args --remap __ns:=/openzen
+ros2 run openzen_driver openzen_node --ros-args -r __ns:=/openzen
 
 ## Check IMU data
 ros2 topic echo /openzen/data --no-arr

@@ -46,7 +46,7 @@ class TestMagnetometer(Node):
 
 def main():
     rclpy.init()
-    node = MagnetometerTester()
+    node = TestMagnetometer()
     rclpy.spin(node)
 
 if __name__ == '__main__':
