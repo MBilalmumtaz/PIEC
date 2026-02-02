@@ -50,7 +50,7 @@ sudo ip link set can0 up 2>/dev/null
 echo "8. Checking CAN status..."
 ip -details link show can0
 
-#IMU
+#IMU (LPMS IG1 CAN)
 # Kill any existing ROS nodes
 ros2 daemon stop
 ros2 daemon start
@@ -66,8 +66,19 @@ sudo fuser -v /dev/ttyUSB0
 sudo pkill -9 screen
 sudo pkill -9 minicom
 sudo fuser -k /dev/ttyUSB0
-# Test with cat (simple read)
-sudo cat /dev/ttyUSB0 | head -c 100 | hexdump -C
+
+# LPMS IG1 CAN IMU
+# Start the OpenZen IMU driver
+ros2 run openzen_driver openzen_node --ros-args --remap __ns:=/openzen
+
+# Check IMU data
+ros2 topic echo /openzen/data --no-arr
+
+# Check magnetometer data
+ros2 topic echo /openzen/mag --no-arr
+
+# Check publishing rate
+ros2 topic hz /openzen/data
 # Set CAN parameters
 sudo ip link set can0 down
 sudo ip link set can0 type can bitrate 500000
