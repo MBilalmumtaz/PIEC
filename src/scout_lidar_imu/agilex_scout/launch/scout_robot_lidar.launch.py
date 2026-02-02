@@ -171,26 +171,7 @@ def generate_launch_description():
     ld.add_action(openzen_imu_node)
     
     # ------------------------------------------------------------------
-    # 6. MAGNETOMETER CONVERTER (Must come BEFORE IMU filter)
-    # ------------------------------------------------------------------
-    magnetometer_converter_node = Node(
-        package='piec_controller',
-        executable='magnetometer_converter',
-        name='magnetometer_converter',
-        output='screen',
-        parameters=[{
-            'use_sim_time': use_sim_time,
-            'scale_factor': 1.0,  # OpenZen already outputs in Tesla
-            'input_topic': '/openzen/mag',  # CHANGED: from /magnetic to /openzen/mag
-            'output_topic': '/magnetic_field',
-            'frame_id': 'imu_link',
-        }],
-        condition=IfCondition(use_imu)
-    )
-    ld.add_action(magnetometer_converter_node)
-    
-    # ------------------------------------------------------------------
-    # 7. IMU FILTER (Madgwick filter with magnetometer) - SIMPLIFIED
+    # 6. IMU FILTER (Madgwick filter with magnetometer)
     # ------------------------------------------------------------------
     imu_filter_node = Node(
         package='imu_filter_madgwick',
@@ -213,9 +194,9 @@ def generate_launch_description():
             'remove_gravity_vector': True,
         }],
         remappings=[
-            ('/imu/data_raw', '/openzen/data'),  # CHANGED: from /imu_raw to /openzen/data
+            ('/imu/data_raw', '/openzen/data'),
             ('/imu/data', '/imu'),
-            ('/imu/mag', '/magnetic_field'),
+            ('/imu/mag', '/openzen/mag'),  # CHANGED: Direct connection to OpenZen
         ],
         condition=IfCondition(use_imu)
     )
