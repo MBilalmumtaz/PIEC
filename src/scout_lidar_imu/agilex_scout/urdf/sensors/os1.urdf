@@ -25,7 +25,7 @@
 	</link>
 
 	<!-- Fixed joint: IMU attached to mobile_robot_base_link (not os_sensor) -->
-	<!-- This prevents TF conflicts with static_transform_publisher in launch file -->
+	<!-- Replaces static_transform_publisher from launch file to be the single authoritative source -->
 	<joint name="base_to_imu" type="fixed">
 		<parent link="mobile_robot_base_link"/>
 		<child  link="imu_link"/>
