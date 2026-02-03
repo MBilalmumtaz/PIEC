@@ -91,6 +91,8 @@ class ControllerNode(Node):
         self.goal_position = None
         self.goal_reached_time = None
         self.goal_stopped = False
+        self.goal_stable_start_time = None  # Track when robot became stable at goal
+        self.last_goal_distance = None  # Track distance history for stability check
 
         # Enhanced obstacle tracking with 360-degree awareness
         self.obstacle_map = {}
@@ -279,6 +281,13 @@ class ControllerNode(Node):
             'goal_completion_distance': 0.25,
             'goal_completion_angular_tolerance': 0.15,
             'min_stop_time': 1.5,
+            'goal_stability_time': 2.0,  # Time robot must be stable at goal
+            
+            # Heading control parameters
+            'heading_kp': 1.5,  # Proportional gain for heading control
+            'heading_deadband_deg': 2.0,  # Deadband for small angle errors (degrees)
+            'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
+            'rotate_in_place_angle_deg': 45.0,  # Rotate in place if angle error > this (degrees)
             
             # Control mode
             'use_dwa': True,
@@ -340,6 +349,13 @@ class ControllerNode(Node):
         
         # Goal completion parameters
         self.goal_completion_distance = float(self.get_parameter('goal_completion_distance').value)
+        self.goal_stability_time = float(self.get_parameter('goal_stability_time').value)
+        
+        # Heading control parameters
+        self.heading_kp = float(self.get_parameter('heading_kp').value)
+        self.heading_deadband_deg = float(self.get_parameter('heading_deadband_deg').value)
+        self.max_heading_rate = float(self.get_parameter('max_heading_rate').value)
+        self.rotate_in_place_angle_deg = float(self.get_parameter('rotate_in_place_angle_deg').value)
         
         # Control mode
         self.use_dwa = self.get_parameter('use_dwa').value
@@ -1181,11 +1197,12 @@ class ControllerNode(Node):
             goal_x, goal_y = self.goal_position
             distance_to_goal = math.hypot(goal_x - x, goal_y - y)
             
-            # Use the configurable goal_completion_distance parameter
+            # Check if we're within goal completion distance
             if distance_to_goal < self.goal_completion_distance:
                 if not self.goal_reached:
                     self.goal_reached = True
                     self.goal_reached_time = time.monotonic()
+                    self.goal_stable_start_time = None  # Reset stability timer
                     self.get_logger().info(f"🎯 GOAL REACHED! Distance: {distance_to_goal:.3f}m")
                     self.get_logger().info(f"   Final position: ({x:.3f}, {y:.3f})")
                     self.get_logger().info(f"   Target: ({goal_x:.3f}, {goal_y:.3f})")
@@ -1193,20 +1210,46 @@ class ControllerNode(Node):
                 # Stop immediately when goal is reached
                 self.publish_cmd(0.0, 0.0)
                 
+                # Check for stability - robot should be stopped and stable
                 current_time = time.monotonic()
-                if self.goal_reached_time is not None and \
-                   current_time - self.goal_reached_time >= 1.5:
+                
+                # Check if robot is moving slowly (stable)
+                if self.odom is not None:
+                    linear_vel = math.hypot(
+                        self.odom.twist.twist.linear.x,
+                        self.odom.twist.twist.linear.y
+                    )
+                    angular_vel = abs(self.odom.twist.twist.angular.z)
+                    is_stable = (linear_vel < 0.05 and angular_vel < 0.05)
+                    
+                    if is_stable:
+                        if self.goal_stable_start_time is None:
+                            self.goal_stable_start_time = current_time
+                        elif current_time - self.goal_stable_start_time >= self.goal_stability_time:
+                            self.goal_stopped = True
+                            self.get_logger().info(
+                                f"🛑 Goal completed - robot stable for {self.goal_stability_time:.1f}s"
+                            )
+                    else:
+                        # Reset stability timer if robot starts moving
+                        self.goal_stable_start_time = None
+                elif self.goal_reached_time is not None and \
+                     current_time - self.goal_reached_time >= 1.5:
+                    # Fallback if no odometry - use time-based completion
                     self.goal_stopped = True
-                    self.get_logger().info("🛑 Goal completed - robot stopped")
+                    self.get_logger().info("🛑 Goal completed - timeout reached")
                 
                 return
             else:
+                # Robot moved away from goal - reset completion state
                 if self.goal_reached and distance_to_goal > self.goal_completion_distance * 1.5:
                     self.goal_reached = False
                     self.goal_reached_time = None
                     self.goal_stopped = False
+                    self.goal_stable_start_time = None
                     if self.debug_mode:
                         self.get_logger().debug("Goal reset - moving away from goal")
+
 
         # GET TARGET WAYPOINT
         target_waypoint = self.select_target_waypoint(x, y, yaw)
@@ -1332,7 +1375,7 @@ class ControllerNode(Node):
             self.publish_cmd(float(v), float(w))
 
     def calculate_simple_control(self, target_waypoint, current_x, current_y, current_yaw):
-        """Simple control with STRICT straight-line handling"""
+        """Simple control with improved lateral goal handling and tunable parameters"""
         target_x = target_waypoint.x
         target_y = target_waypoint.y
 
@@ -1340,10 +1383,11 @@ class ControllerNode(Node):
         dy = target_y - current_y
         distance = math.hypot(dx, dy)
         
+        # Calculate bearing to target (always in [-pi, pi])
         target_angle = math.atan2(dy, dx)
-        angle_diff = target_angle - current_yaw
         
-        # Normalize angle difference
+        # Calculate angle error with proper wrapping to [-pi, pi]
+        angle_diff = target_angle - current_yaw
         angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
         
         # CRITICAL FIRST CHECK: Absolute path straightness (not robot orientation)
@@ -1358,47 +1402,55 @@ class ControllerNode(Node):
             if abs(path_dx) > 0.2 and abs(path_dy) / abs(path_dx) < 0.03:
                 v = min(self.max_linear_vel * 0.7, distance * 0.5)
                 w = 0.0
-                self.get_logger().info(
-                    f"🎯 PATH is straight: dx={path_dx:.3f}, dy={path_dy:.3f}, "
-                    f"ratio={abs(path_dy)/abs(path_dx):.4f} - FORCING w=0"
-                )
+                if self.debug_mode:
+                    self.get_logger().info(
+                        f"🎯 PATH is straight: dx={path_dx:.3f}, dy={path_dy:.3f}, "
+                        f"ratio={abs(path_dy)/abs(path_dx):.4f} - FORCING w=0"
+                    )
                 return v, w
         
         # SECOND CHECK: Robot-to-target straightness
         if abs(dy) < 0.03 and abs(dx) > 0.2:  # Stricter: 3cm not 5cm
             v = min(self.max_linear_vel * 0.7, distance * 0.5)
             w = 0.0
-            self.get_logger().info(
-                f"🎯 Robot-to-target straight: dx={dx:.3f}, dy={dy:.3f} - w=0"
-            )
+            if self.debug_mode:
+                self.get_logger().info(
+                    f"🎯 Robot-to-target straight: dx={dx:.3f}, dy={dy:.3f} - w=0"
+                )
             return v, w
         
-        # THIRD CHECK: Small angle error (reduced from 3° to 1.5°)
-        if abs(angle_diff) < math.radians(1.5):  # 1.5 degrees instead of 3
+        # THIRD CHECK: Small angle error using deadband parameter
+        heading_deadband_rad = math.radians(self.heading_deadband_deg)
+        if abs(angle_diff) < heading_deadband_rad:
             v = min(self.max_linear_vel * 0.7, distance * 0.5)
             w = 0.0
-            self.get_logger().info(
-                f"📐 Angle error tiny ({math.degrees(angle_diff):.2f}°) - w=0"
-            )
+            if self.debug_mode:
+                self.get_logger().info(
+                    f"📐 Angle error within deadband ({math.degrees(angle_diff):.2f}°) - w=0"
+                )
             return v, w
         
-        # CRITICAL FIX: REAL ROBOT NEEDS DIFFERENT GAINS
-        # Based on your logs, robot gets v=0.284 when you send v=0.3
-        # This is about 5% reduction, possibly due to CAN bus or motor controller
+        # Calculate angular velocity using heading_kp parameter
+        # Positive angle_diff means target is to the left -> turn left (positive w = CCW)
+        # Negative angle_diff means target is to the right -> turn right (negative w = CW)
+        rotate_threshold_rad = math.radians(self.rotate_in_place_angle_deg)
         
-        REAL_ROBOT_SCALING = 0.95  # 95% of commanded speed actually reaches motors
-        ANGULAR_CORRECTION = 0.9   # Angular velocity correction
-        
-        if abs(angle_diff) > math.radians(90):
-            # Large angle error - turn in place
+        if abs(angle_diff) > rotate_threshold_rad:
+            # Large angle error - rotate in place before driving
             v = 0.0
-            w = np.clip(angle_diff * 1.0, -self.max_angular_vel, self.max_angular_vel)
-            w *= ANGULAR_CORRECTION * REAL_ROBOT_SCALING
+            w = angle_diff * self.heading_kp
+            # Cap to max_heading_rate
+            w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
+            if self.debug_mode:
+                self.get_logger().info(
+                    f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}"
+                )
         else:
-            # Move forward with turning
-            alignment_factor = max(0.2, 1.0 - abs(angle_diff) / math.radians(90))
+            # Move forward with turning - use combined motion
+            # Scale forward velocity based on alignment
+            alignment_factor = max(0.3, 1.0 - abs(angle_diff) / rotate_threshold_rad)
             
-            # Calculate base velocity
+            # Calculate base velocity based on distance
             if distance > 2.0:
                 v = min(self.max_linear_vel, distance * 0.4)
             elif distance > 0.5:
@@ -1406,13 +1458,23 @@ class ControllerNode(Node):
             else:
                 v = min(self.max_linear_vel * 0.6, distance * 1.0)
             
-            # Apply REAL ROBOT scaling
-            v *= REAL_ROBOT_SCALING * alignment_factor
+            # Apply alignment factor
+            v *= alignment_factor
             
-            # Calculate angular velocity
-            w = angle_diff * 1.2  # Increased gain for real robot
-            w = np.clip(w, -self.max_angular_vel * 0.7, self.max_angular_vel * 0.7)
-            w *= ANGULAR_CORRECTION * REAL_ROBOT_SCALING
+            # Calculate angular velocity using heading_kp
+            w = angle_diff * self.heading_kp
+            
+            # Cap to max_heading_rate (using 0.8 factor to allow some headroom)
+            w = np.clip(w, -self.max_heading_rate * 0.8, self.max_heading_rate * 0.8)
+            
+            if self.debug_mode:
+                self.get_logger().info(
+                    f"🚗 Forward+turn: angle_error={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
+                )
+        
+        # Apply robot-specific scaling factors from parameters
+        v *= self.linear_scale
+        w *= self.angular_scale * self.angular_sign
         
         return v, w
 

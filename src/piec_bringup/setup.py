@@ -30,6 +30,7 @@ setup(
         'test_goal_publisher = piec_bringup.test_goal_publisher:main',
         'debug_path = piec_bringup.debug_path:main',
         'tf_validator = piec_bringup.tf_validator:main',
+        'controller_diagnostics = piec_bringup.controller_diagnostics:main',
     ],
 },
 )
