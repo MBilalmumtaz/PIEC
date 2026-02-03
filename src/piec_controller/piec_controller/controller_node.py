@@ -1560,10 +1560,7 @@ class ControllerNode(Node):
                     f"🚗 Forward+turn: angle_error={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
         
-        # Apply robot-specific scaling factors from parameters
-        v *= self.linear_scale
-        w *= self.angular_scale * self.angular_sign
-        
+        # Return raw velocities - scaling and sign correction applied in publish_cmd()
         return v, w
 
     def get_current_clearance(self):
