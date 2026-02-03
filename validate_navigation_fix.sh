@@ -42,21 +42,29 @@ echo ""
 echo "3. Checking base_link→imu_link transform..."
 timeout 5 ros2 run tf2_ros tf2_echo base_link imu_link > /tmp/tf_check.log 2>&1
 if grep -q "Translation:" /tmp/tf_check.log; then
-    Z_TRANS=$(grep "z:" /tmp/tf_check.log | head -1 | grep -oP '\d+\.\d+')
-    YAW=$(grep "yaw:" /tmp/tf_check.log | grep -oP '[-]?\d+\.\d+' | head -1)
+    Z_TRANS=$(grep "z:" /tmp/tf_check.log | head -1 | grep -oP '[-]?\d*\.?\d+' || echo "")
+    YAW=$(grep "yaw:" /tmp/tf_check.log | grep -oP '[-]?\d*\.?\d+' | head -1 || echo "")
     
     # Check if z is approximately 0.2 (allow 0.15-0.25)
-    if (( $(echo "$Z_TRANS > 0.15" | bc -l) )) && (( $(echo "$Z_TRANS < 0.25" | bc -l) )); then
-        echo -e "${GREEN}✓ IMU z-height = ${Z_TRANS}m (expected ~0.2m)${NC}"
+    if [ -n "$Z_TRANS" ]; then
+        if (( $(echo "$Z_TRANS > 0.15" | bc -l) )) && (( $(echo "$Z_TRANS < 0.25" | bc -l) )); then
+            echo -e "${GREEN}✓ IMU z-height = ${Z_TRANS}m (expected ~0.2m)${NC}"
+        else
+            echo -e "${RED}✗ IMU z-height = ${Z_TRANS}m (expected ~0.2m)${NC}"
+        fi
     else
-        echo -e "${RED}✗ IMU z-height = ${Z_TRANS}m (expected ~0.2m)${NC}"
+        echo -e "${YELLOW}⚠ Could not parse IMU z-height${NC}"
     fi
     
     # Check if yaw is approximately -0.94 (allow -1.1 to -0.75)
-    if (( $(echo "$YAW < -0.75" | bc -l) )) && (( $(echo "$YAW > -1.15" | bc -l) )); then
-        echo -e "${GREEN}✓ IMU yaw = ${YAW} rad (expected ~-0.94 rad)${NC}"
+    if [ -n "$YAW" ]; then
+        if (( $(echo "$YAW < -0.75" | bc -l) )) && (( $(echo "$YAW > -1.15" | bc -l) )); then
+            echo -e "${GREEN}✓ IMU yaw = ${YAW} rad (expected ~-0.94 rad)${NC}"
+        else
+            echo -e "${YELLOW}⚠ IMU yaw = ${YAW} rad (expected ~-0.94 rad)${NC}"
+        fi
     else
-        echo -e "${YELLOW}⚠ IMU yaw = ${YAW} rad (expected ~-0.94 rad)${NC}"
+        echo -e "${YELLOW}⚠ Could not parse IMU yaw${NC}"
     fi
 else
     echo -e "${RED}✗ Could not read transform${NC}"

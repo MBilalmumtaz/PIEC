@@ -57,18 +57,29 @@ except ImportError:
 class ControllerNode(Node):
     def __init__(self):
         super().__init__('enhanced_piec_controller')
-        # ADD THESE PARAMETERS for real robot calibration
+        
+        # REAL ROBOT CALIBRATION PARAMETERS
+        # These parameters correct for hardware-specific discrepancies
+        
+        # linear_scale_factor: Scales commanded linear velocity (default: 1.0)
+        # Use values < 1.0 to reduce actual speed if robot moves too fast
         self.declare_parameter('linear_scale_factor', 1.0)
+        
+        # angular_scale_factor: Scales commanded angular velocity (default: 1.0)
+        # Use values < 1.0 to reduce actual turning speed
         self.declare_parameter('angular_scale_factor', 1.0)
+        
+        # angular_sign_correction: Corrects angular velocity sign convention (default: 1.0)
+        # Standard ROS: +w = counter-clockwise (CCW), -w = clockwise (CW)
+        # Scout Mini: +cmd_vel.angular.z causes clockwise (CW) rotation
+        # Set to -1.0 for Scout Mini to invert controller's standard ROS commands
+        # Set to +1.0 for robots following standard ROS convention
         self.declare_parameter('angular_sign_correction', 1.0)
         
         self.linear_scale = self.get_parameter('linear_scale_factor').value
         self.angular_scale = self.get_parameter('angular_scale_factor').value
         self.angular_sign = self.get_parameter('angular_sign_correction').value
         
-        # Based on your logs: cmd_vel has opposite angular sign!
-        # Controller sends w=0.56, robot gets w=-0.554
-        # angular_sign should be -1.0 for your robot!
         # Load parameters from YAML file
         self.load_parameters_from_yaml()
 
@@ -1192,6 +1203,10 @@ class ControllerNode(Node):
             self.publish_cmd(0.0, 0.0)
             return
 
+        # Initialize distance_to_goal to avoid UnboundLocalError
+        # This will be used later if PINN optimization is called
+        distance_to_goal = float('inf')
+        
         # Goal completion check with improved tolerance
         if self.goal_position is not None:
             goal_x, goal_y = self.goal_position
