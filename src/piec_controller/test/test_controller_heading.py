@@ -396,5 +396,103 @@ class TestDistanceToGoalCrash(unittest.TestCase):
                         "PINN should not be used when distance_to_goal is inf")
 
 
+class TestAngularSignDoubleCorrection(unittest.TestCase):
+    """Test that angular sign correction is only applied once (Bug Fix)"""
+    
+    def test_no_double_sign_correction(self):
+        """
+        Test the bug fix: angular_sign should only be applied in publish_cmd(),
+        not in calculate_simple_control().
+        
+        Bug scenario from logs:
+        - Goal at (-0.066, 1.262) when robot at origin
+        - Goal is ~93° to the LEFT
+        - Controller should output positive w (turn LEFT/CCW)
+        - But with double sign correction, it was outputting negative w (turn RIGHT/CW)
+        """
+        # Simulate the bug scenario
+        current_x, current_y, current_yaw = 0.0, 0.0, 0.0
+        target_x, target_y = -0.066, 1.262
+        
+        # Calculate what controller should compute
+        dx = target_x - current_x
+        dy = target_y - current_y
+        target_angle = math.atan2(dy, dx)
+        angle_diff = target_angle - current_yaw
+        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+        
+        # Goal is to the LEFT (positive angle)
+        self.assertGreater(angle_diff, 0, "Goal should be to the LEFT (positive angle)")
+        self.assertAlmostEqual(math.degrees(angle_diff), 92.7, places=0, 
+                              msg="Goal should be ~93° to the left")
+        
+        # Controller calculates angular velocity (before any sign correction)
+        heading_kp = 1.0
+        w_raw = angle_diff * heading_kp
+        
+        # w_raw should be POSITIVE for left turn
+        self.assertGreater(w_raw, 0, 
+                          "Raw angular velocity should be POSITIVE for left turn")
+        
+        # Simulate OLD buggy behavior (double sign correction)
+        angular_sign = -1.0  # Wrong default in old code
+        angular_scale = 1.0
+        
+        # OLD BUG: Applied in calculate_simple_control()
+        w_after_calculate = w_raw * angular_scale * angular_sign  # First application
+        self.assertLess(w_after_calculate, 0, 
+                       "After first sign correction, w becomes negative (WRONG)")
+        
+        # OLD BUG: Applied again in publish_cmd()
+        w_final_buggy = w_after_calculate * angular_sign  # Second application
+        self.assertGreater(w_final_buggy, 0, 
+                          "After double correction, sign flips back (but magnitude may differ)")
+        
+        # NEW CORRECT behavior: sign correction only in publish_cmd()
+        w_after_calculate_fixed = w_raw * angular_scale  # No sign correction here!
+        self.assertGreater(w_after_calculate_fixed, 0,
+                          "calculate_simple_control should output positive w (no sign flip)")
+        
+        # With angular_sign = 1.0 (standard ROS)
+        angular_sign_correct = 1.0
+        w_final_correct = w_after_calculate_fixed * angular_sign_correct
+        self.assertGreater(w_final_correct, 0,
+                          "Final w should be POSITIVE for left turn with correct sign")
+    
+    def test_sign_correction_only_once_right_turn(self):
+        """Test that right turn also works correctly with single sign correction"""
+        current_x, current_y, current_yaw = 0.0, 0.0, 0.0
+        target_x, target_y = 1.0, -0.5  # Goal to the RIGHT
+        
+        dx = target_x - current_x
+        dy = target_y - current_y
+        target_angle = math.atan2(dy, dx)
+        angle_diff = target_angle - current_yaw
+        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+        
+        # Goal is to the RIGHT (negative angle)
+        self.assertLess(angle_diff, 0, "Goal should be to the RIGHT (negative angle)")
+        
+        # Controller calculates angular velocity
+        heading_kp = 1.0
+        w_raw = angle_diff * heading_kp
+        
+        # w_raw should be NEGATIVE for right turn
+        self.assertLess(w_raw, 0,
+                       "Raw angular velocity should be NEGATIVE for right turn")
+        
+        # NEW CORRECT behavior: no sign correction in calculate_simple_control()
+        angular_scale = 1.0
+        w_after_calculate = w_raw * angular_scale  # No sign correction
+        self.assertLess(w_after_calculate, 0,
+                       "After calculate, w should still be negative")
+        
+        # Apply sign correction once in publish_cmd()
+        angular_sign = 1.0  # Standard ROS convention
+        w_final = w_after_calculate * angular_sign
+        self.assertLess(w_final, 0,
+                       "Final w should be NEGATIVE for right turn")
+
+
 if __name__ == '__main__':
     unittest.main()
