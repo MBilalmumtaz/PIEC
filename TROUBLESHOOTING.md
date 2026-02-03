@@ -454,7 +454,8 @@ ros2 topic hz /imu       # Should be ~100 Hz
 
 **Diagnosis:**
 ```bash
-# 1. Run controller diagnostics
+# 1. Run controller diagnostics (requires workspace rebuild after pulling PR)
+# If not built yet: cd ~/scoutmini_ws3 && colcon build --packages-select piec_bringup
 ros2 run piec_bringup controller_diagnostics
 
 # This will show:
