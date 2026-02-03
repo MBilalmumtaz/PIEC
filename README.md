@@ -305,6 +305,36 @@ ros2 topic echo /imu --field orientation
 # Yaw values should be consistent (accounting for -0.94 rad offset)
 ```
 
+### Issue: Robot Not Following Path (Even in Empty Environment)
+
+**FIXED: Changed `require_explicit_goal` parameter to `False`**
+
+**Symptom:** Robot can see `piec/path` in RViz but doesn't follow it, even in empty environment.
+
+**Root Cause:** The controller parameter `require_explicit_goal` was set to `True`, which blocked the controller from following any paths until an explicit goal was published to `/goal_pose` topic.
+
+**Fix Applied:** Changed default parameter in `controller_node.py`:
+```python
+'require_explicit_goal': False,  # Allow path following without explicit goal
+```
+
+**To verify:**
+```bash
+# Launch the system
+ros2 launch piec_bringup piec_real_robot.launch.py
+
+# Check that path is being followed
+ros2 topic echo /cmd_vel  # Should show velocity commands
+
+# Verify path is received
+ros2 topic echo /piec/path
+```
+
+**Note:** If you still want to require explicit goals, you can override this in the launch file or via parameter:
+```bash
+ros2 run piec_controller controller_node --ros-args -p require_explicit_goal:=true
+```
+
 ### Issue: Robot Not Reaching Goals / Path Following Fails
 
 **Symptoms:**

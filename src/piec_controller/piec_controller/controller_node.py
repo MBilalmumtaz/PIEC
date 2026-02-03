@@ -272,7 +272,7 @@ class ControllerNode(Node):
             # Control Parameters
             'control_frequency': 20.0,
             'debug_mode': True,
-            'require_explicit_goal': True,
+            'require_explicit_goal': False,  # Allow path following without explicit goal
             'enable_obstacle_memory': False,
             
             # Goal completion parameters

@@ -150,7 +150,48 @@ python3 test_magnetometer.py
 
 ### 3. Path Following / Navigation Issues
 
-#### 3A. Robot Not Reaching Goals
+#### 3A. Robot Not Following Path (Visible in RViz)
+
+**Symptom:** Path visible on `/piec/path` topic in RViz, but robot doesn't move/follow it.
+
+**Root Cause:** Controller parameter `require_explicit_goal` was blocking path following.
+
+**Diagnosis:**
+```bash
+# Check if paths are being received
+ros2 topic echo /piec/path
+
+# Check controller logs for "Ignoring path" messages
+ros2 node list | grep controller
+# Then check the controller output
+
+# Verify parameter setting
+ros2 param get /enhanced_piec_controller require_explicit_goal
+# Should be: Boolean value is: False
+```
+
+**Fix:**
+The controller now defaults to `require_explicit_goal: False`, allowing it to follow paths without needing an explicit goal first.
+
+If you see debug messages like:
+```
+"Ignoring path - no explicit goal received yet"
+```
+
+Then the parameter is still set to `True`. Override it:
+```bash
+ros2 param set /enhanced_piec_controller require_explicit_goal false
+```
+
+Or in the launch file, add:
+```python
+parameters=[{
+    'require_explicit_goal': False,
+    ...
+}]
+```
+
+#### 3B. Robot Not Reaching Goals
 
 **Symptom:** Robot stops before goal, or never attempts to move toward goal.
 
