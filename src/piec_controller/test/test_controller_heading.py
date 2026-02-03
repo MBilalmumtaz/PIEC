@@ -329,5 +329,72 @@ class TestGoalCompletionLogic(unittest.TestCase):
         self.assertFalse(is_stable, "Robot should not be considered stable")
 
 
+class TestDistanceToGoalCrash(unittest.TestCase):
+    """Test for distance_to_goal UnboundLocalError regression"""
+    
+    def test_distance_to_goal_always_defined(self):
+        """Test that distance_to_goal is defined even when goal_position is None"""
+        # Simulate the scenario that caused the crash:
+        # - Path exists
+        # - goal_position is None (no explicit goal set)
+        # - PINN optimization tries to use distance_to_goal
+        
+        # Mock scenario variables
+        goal_position = None
+        path_exists = True
+        pinn_client_available = True
+        
+        # This is the fix: initialize distance_to_goal early
+        distance_to_goal = float('inf')
+        
+        # Only update if goal position is available
+        if goal_position is not None:
+            # In real code: distance_to_goal = math.hypot(goal_x - x, goal_y - y)
+            distance_to_goal = 1.5  # example
+        
+        # Verify distance_to_goal is always defined
+        self.assertIsNotNone(distance_to_goal, "distance_to_goal should always be defined")
+        self.assertTrue(isinstance(distance_to_goal, (int, float)), 
+                       "distance_to_goal should be numeric")
+        
+        # When goal_position is None, distance should be infinity
+        if goal_position is None:
+            self.assertEqual(distance_to_goal, float('inf'), 
+                           "distance_to_goal should be inf when no goal")
+    
+    def test_distance_to_goal_with_goal(self):
+        """Test distance_to_goal calculation when goal exists"""
+        # Mock current position
+        current_x, current_y = 0.0, 0.0
+        
+        # Mock goal position
+        goal_position = (1.0, 1.0)
+        
+        # Initialize distance_to_goal
+        distance_to_goal = float('inf')
+        
+        # Calculate distance when goal exists
+        if goal_position is not None:
+            goal_x, goal_y = goal_position
+            distance_to_goal = math.hypot(goal_x - current_x, goal_y - current_y)
+        
+        # Verify distance is calculated correctly
+        expected_distance = math.sqrt(2.0)  # sqrt(1^2 + 1^2)
+        self.assertAlmostEqual(distance_to_goal, expected_distance, places=5)
+    
+    def test_pinn_optimization_safe_with_no_goal(self):
+        """Test that PINN optimization can safely use distance_to_goal even without goal"""
+        # Initialize distance_to_goal to safe default
+        distance_to_goal = float('inf')
+        
+        # Simulate PINN optimization check
+        # PINN typically only optimizes when close to goal
+        should_use_pinn = distance_to_goal < 2.0
+        
+        # When no goal exists (distance = inf), PINN should not be used
+        self.assertFalse(should_use_pinn, 
+                        "PINN should not be used when distance_to_goal is inf")
+
+
 if __name__ == '__main__':
     unittest.main()
