@@ -26,7 +26,7 @@ Before reporting an issue, verify these basics:
 ```bash
 # 1. Check URDF mesh orientation
 ros2 param get /robot_state_publisher robot_description | grep -A 3 "mobile_robot_base_link"
-# Should show rpy="0 0 3.14159" (180° yaw rotation)
+# Should show rpy="1.57 0 1.57" (90° roll + 90° yaw) - this is CORRECT
 
 # 2. Test movement direction
 ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"
@@ -34,11 +34,11 @@ ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"
 ```
 
 **Fix:**
-- Ensure using latest URDF files from this repository
+- Ensure using ORIGINAL URDF configuration (reverted from incorrect PR changes)
 - File: `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini.urdf.xacro`
-- Line 54 should be: `<origin xyz="0 0 0" rpy="0 0 ${M_PI}"/>` (180° yaw rotation)
-- This rotation aligns RViz visualization with real robot orientation
-- The mesh was modeled facing backward, so we rotate it 180° to match reality
+- Line 55 should be: `<origin xyz="0 0 0" rpy="1.57 0 1.57"/>` ✓ CORRECT
+- **NOT**: `<origin xyz="0 0 0" rpy="0 0 0"/>` ✗ WRONG (causes reversed visualization)
+- The `rpy="1.57 0 1.57"` rotation is required for the mesh to align properly
 
 #### 1B. TF Tree Broken or Missing Transforms
 

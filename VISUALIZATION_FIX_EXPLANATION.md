@@ -1,56 +1,51 @@
-# RViz Visualization Fix - 180° Rotation Explanation
+# RViz Visualization Fix - Reverting to Original Working Configuration
 
 ## Problem Statement
 
 **Symptoms:**
 - Real Scout Mini robot moves **FORWARD** when given forward command ✓
-- RViz visualization shows robot moving **BACKWARD** ✗
-- IMU arrow in RViz points to **BACK** of robot instead of front ✗
-- When setting goal in front of robot, robot moves forward correctly but RViz shows backward motion
+- RViz visualization showed robot moving **BACKWARD** ✗
+- IMU arrow in RViz pointed to **BACK** of robot instead of front ✗
+- When setting goal in front of robot, robot moves forward correctly but RViz showed backward motion
 
 ## Root Cause
 
-The 3D mesh file (`scout_mini_base_link2.dae`) was modeled with its "front" facing in the **negative X direction** relative to the ROS convention where forward is **positive X**.
+**The problem was INTRODUCED by an earlier change in this PR!**
 
-### ROS Convention:
-- **X-axis**: Forward (positive X = front)
-- **Y-axis**: Left (positive Y = left side)
-- **Z-axis**: Up (positive Z = up)
+### Original State (WORKING):
+- URDF had: `rpy="1.57 0 1.57"` (90° roll + 90° yaw)
+- Real robot: Worked correctly
+- RViz: Matched real robot movement
+- Status: ✓ CORRECT
 
-### Mesh Model:
-- The original CAD/mesh was created with the "front" of the robot facing the **-X direction**
-- This is common in different CAD software where coordinate systems vary
+### Changed State (BROKEN):
+- PR changed to: `rpy="0 0 0"` (no rotation)
+- Real robot: Still worked correctly  
+- RViz: Showed REVERSED movement
+- Status: ✗ WRONG - This change broke the visualization!
 
 ## Solution
 
-Apply a **180° rotation around the Z-axis (yaw)** to flip the mesh so its front aligns with positive X.
+**REVERT to the original working configuration: `rpy="1.57 0 1.57"`**
 
 ### URDF Change:
 ```xml
-<!-- BEFORE (Incorrect - showed reversed) -->
+<!-- INCORRECT CHANGE (that broke it) -->
 <origin xyz="0 0 0" rpy="0 0 0"/>
 
-<!-- AFTER (Correct - matches reality) -->
-<origin xyz="0 0 0" rpy="0 0 ${M_PI}"/>
+<!-- CORRECT (original working state) -->
+<origin xyz="0 0 0" rpy="1.57 0 1.57"/>
 ```
 
-Where `${M_PI}` = 3.14159 radians = 180°
-
 ### What This Does:
-1. Rotates the visual mesh 180° around Z-axis (yaw)
-2. Does NOT affect the robot's actual kinematics or control
-3. Only changes how the mesh is displayed in RViz
-4. Collision geometry also rotated to match visual
+1. Restores the original mesh orientation that was working
+2. The `rpy="1.57 0 1.57"` accounts for how the mesh was modeled in CAD
+3. This rotation aligns the mesh coordinate system with ROS conventions
+4. Both visual and collision geometry use the same rotation
 
 ## Verification
 
-### Before Fix:
-```
-Real Robot:  →→→ (moves forward)
-RViz Shows:  ←←← (shows backward)  ✗ WRONG
-```
-
-### After Fix:
+### After Reverting to Original (CORRECT):
 ```
 Real Robot:  →→→ (moves forward)
 RViz Shows:  →→→ (shows forward)   ✓ CORRECT
@@ -69,49 +64,67 @@ ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"
 
 ## Technical Details
 
-### Rotation Matrices
-A 180° yaw rotation (around Z-axis) transforms coordinates as:
-```
-[x']   [-1  0  0] [x]
-[y'] = [ 0 -1  0] [y]
-[z']   [ 0  0  1] [z]
-```
+### Understanding rpy="1.57 0 1.57"
 
-This effectively:
-- Flips X: front becomes back, back becomes front
-- Flips Y: left becomes right, right becomes left
-- Keeps Z: up stays up, down stays down
+This rotation consists of two components:
+- **Roll (1.57 rad = 90°)**: Rotation around X-axis
+- **Pitch (0 rad = 0°)**: No rotation around Y-axis  
+- **Yaw (1.57 rad = 90°)**: Rotation around Z-axis
 
-### Why Not Other Rotations?
+This specific combination aligns the mesh coordinate system (as it was modeled in CAD) with the ROS coordinate system.
 
-- **Roll (rotation around X)**: Would tilt the robot sideways - incorrect
-- **Pitch (rotation around Y)**: Would tilt the robot forward/backward - incorrect
-- **Yaw (rotation around Z)**: Rotates horizontally - THIS IS CORRECT ✓
+### Why This Specific Rotation?
 
-### Frame Hierarchy
+The Scout Mini mesh file was created in a CAD program with a different coordinate system convention:
+- The mesh's "forward" axis doesn't align with ROS +X
+- The mesh's "up" axis may not align with ROS +Z
+- The `rpy="1.57 0 1.57"` transform converts between these coordinate systems
+
+### What Happened in This PR?
+
+1. **Original Repository State**: `rpy="1.57 0 1.57"` - WORKING ✓
+2. **Early PR Commit**: Changed to `rpy="0 0 0"` - BROKEN ✗
+   - Someone thought this was "cleaning up" or "fixing" the URDF
+   - Actually broke the real robot visualization
+3. **Latest Commit**: Correctly REVERTED to `rpy="1.57 0 1.57"` - WORKING ✓
+
+## Why The Confusion?
+
+### Simulation vs Real Robot
+
+- **Gazebo simulation**: May have different mesh handling or compensation
+- **Real robot RViz**: Uses the URDF mesh rotation directly
+- What works in simulation might not work for real robot visualization
+
+### Different Mesh Files
+
+If using a different mesh file (`scout_mini_base_link2.dae`), the required rotation depends on:
+- How the mesh was modeled in the original CAD software
+- What coordinate system convention the CAD software used
+- How the mesh was exported to .dae format
+
+## Lesson Learned
+
+**DO NOT change the mesh rotation unless you understand why it was set that way!**
+
+The `rpy="1.57 0 1.57"` may look "wrong" or "complicated", but it's actually correct for this specific mesh file. Changing it to `rpy="0 0 0"` might seem like a "simplification", but it breaks the visualization.
+
+## Frame Hierarchy
+
 ```
 odom (world frame)
   └─ base_footprint (ground contact)
       └─ base_link (robot center)
           └─ mobile_robot_base_link (mesh parent)
-              ├─ Visual mesh (rotated 180° yaw)
-              ├─ Collision mesh (rotated 180° yaw)
+              ├─ Visual mesh (rpy="1.57 0 1.57" - CORRECT)
+              ├─ Collision mesh (rpy="1.57 0 1.57" - CORRECT)
               └─ Wheels, sensors, etc.
 ```
 
 The rotation is applied at the `mobile_robot_base_link` visual/collision level, so:
-- All child frames (wheels, sensors) are NOT affected
-- Only the visual representation is rotated
+- All child frames (wheels, sensors) are NOT affected by this rotation
+- Only the visual representation is transformed
 - Kinematics calculations remain unchanged
-
-## Why This Issue Occurred
-
-1. **Mesh Origin**: The 3D artist/CAD designer modeled the robot facing their preferred direction
-2. **Export Convention**: When exported to .dae format, that orientation was preserved
-3. **ROS Integration**: ROS expects forward = +X, but mesh had forward = -X
-4. **Simulation vs Reality**: 
-   - In simulation (Gazebo), orientation might have been compensated elsewhere
-   - On real robot, this compensation was missing or different
 
 ## Alternative Approaches (Not Used)
 

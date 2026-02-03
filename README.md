@@ -263,22 +263,25 @@ ros2 topic echo /odometry --field twist.twist
 
 ### Issue: Robot Moves Backward in RViz but Forward in Reality
 
-**Fixed in latest version.** The URDF mesh now has a 180° yaw rotation to align RViz visualization with real robot orientation.
+**RESOLVED: Reverted to original working configuration.**
 
-**To verify fix:**
+The URDF mesh orientation `rpy="1.57 0 1.57"` (90° roll + 90° yaw) is the CORRECT configuration for the real Scout Mini robot. An earlier change to `rpy="0 0 0"` broke the visualization.
+
+**To verify the fix:**
 1. Launch `ros2 launch agilex_scout scout_robot_lidar.launch.py`
 2. Send a forward command: `ros2 topic pub /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"`
 3. In RViz, robot should move forward (positive X direction) matching real robot movement
 
-**Current configuration:**
-- `scout_mini.urdf.xacro` has `rpy="0 0 ${M_PI}"` for base_link mesh (180° yaw rotation)
-- This ensures RViz visualization matches real robot movement direction
+**Current correct configuration:**
+- `scout_mini.urdf.xacro` has `rpy="1.57 0 1.57"` for base_link mesh ✓
+- This is the ORIGINAL orientation that works with the real robot
+- **DO NOT change this to** `rpy="0 0 0"` - that breaks real robot visualization
 - Wheel axes are `xyz="0 0 1"` (standard convention)
 
-**If visualization is still incorrect:**
-- Verify you're using the latest URDF files
-- The mesh rotation compensates for how the 3D mesh was originally modeled
-- Different mesh files may require different rotation values
+**Technical explanation:**
+- The mesh file was created with a specific orientation in the CAD software
+- The `rpy="1.57 0 1.57"` transform aligns the mesh coordinate system with ROS conventions
+- This transform was working correctly; changing it caused the visualization issues
 
 ### Issue: IMU Data Different Between Standalone and Launch
 

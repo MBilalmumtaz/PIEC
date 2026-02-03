@@ -18,10 +18,10 @@ This PR addresses three critical issues in the Scout Mini PIEC robot system:
 - `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini_wheel_4.xacro`
 
 **Changes:**
-- **Base link mesh orientation**: Applied 180° yaw rotation to align RViz with reality
-  - Before: Mesh at identity orientation `rpy="0 0 0"` (showed reversed)
-  - After: Mesh rotated 180° on yaw axis `rpy="0 0 ${M_PI}"`
-  - Reason: Original mesh model faces backward relative to robot's actual forward direction
+- **Base link mesh orientation**: REVERTED to original working configuration
+  - Incorrect change: Changed to `rpy="0 0 0"` (caused reversed visualization)
+  - **CORRECTED**: Reverted to `rpy="1.57 0 1.57"` (90° roll + 90° yaw) ✓
+  - This is the ORIGINAL orientation that works correctly with the real robot
   
 - **Wheel joint axes**: Corrected axis direction for real robot mode
   - Before: `axis xyz="0 0 -1"` (inverted Z axis)
@@ -29,10 +29,15 @@ This PR addresses three critical issues in the Scout Mini PIEC robot system:
   - Applied to all 4 wheels consistently
 
 **Impact:**
-- RViz visualization now matches real robot movement direction
+- RViz visualization matches real robot movement direction (original working state restored)
 - When real robot moves forward, RViz shows forward movement
 - IMU arrow points to front of robot correctly
 - Visual feedback matches physical reality
+
+**Important Note:**
+- Earlier commits in this PR incorrectly changed the mesh orientation from `rpy="1.57 0 1.57"` to `rpy="0 0 0"`
+- That change CAUSED the visualization reversal problem
+- This has been corrected by reverting to the original `rpy="1.57 0 1.57"`
 
 ### 2. IMU Configuration Fixes
 
