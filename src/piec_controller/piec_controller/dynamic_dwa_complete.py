@@ -456,7 +456,7 @@ class DynamicDWAComplete:
         return min_clearance if min_clearance < float('inf') else 0.0
 
     def fallback_control(self, current_pose, path):
-        """Fallback control when DWA fails"""
+        """Fallback control when DWA fails - IMPROVED for large heading errors"""
         if path is None or len(path.poses) == 0:
             return 0.0, 0.0
         
@@ -477,11 +477,25 @@ class DynamicDWAComplete:
         angle_diff = target_angle - theta
         angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
         
+        # Distance to final goal for progressive threshold reduction
+        goal_x = path.poses[-1].pose.position.x
+        goal_y = path.poses[-1].pose.position.y
+        goal_distance = math.hypot(goal_x - x, goal_y - y)
+        
+        # FIX: Progressive rotation threshold - reduce as robot approaches goal
+        # Far from goal: 90°, Close to goal (< 2m): 60°, Very close (< 0.5m): 30°
+        if goal_distance > 2.0:
+            rotation_threshold = math.radians(90)
+        elif goal_distance > 0.5:
+            rotation_threshold = math.radians(60)
+        else:
+            rotation_threshold = math.radians(30)
+        
         if distance < 0.3:
             v = 0.0
             w = 0.0
-        elif abs(angle_diff) > math.radians(75):
-            # Turn in place
+        elif abs(angle_diff) > rotation_threshold:
+            # Turn in place for large errors
             v = 0.0
             w = np.clip(angle_diff * 0.7, -self.max_w * 0.6, self.max_w * 0.6)
         else:

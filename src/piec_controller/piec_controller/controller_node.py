@@ -148,6 +148,10 @@ class ControllerNode(Node):
         self.escape_directions_tried = []
         self.last_escape_direction = None
         self.escape_success_count = 0
+        
+        # Rotation timeout tracking to prevent infinite spinning
+        self.rotation_start_time = None
+        self.rotation_timeout = 10.0  # Maximum time to spend rotating in place (seconds)
         self.free_space_escape_preferred = True
         
         # Oscillation detection - NEW
@@ -298,7 +302,7 @@ class ControllerNode(Node):
             'heading_kp': 1.5,  # Proportional gain for heading control
             'heading_deadband_deg': 2.0,  # Deadband for small angle errors (degrees)
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
-            'rotate_in_place_angle_deg': 45.0,  # Rotate in place if angle error > this (degrees)
+            'rotate_in_place_angle_deg': 90.0,  # Rotate in place if angle error > this (degrees) - INCREASED from 45° to reduce oscillation
             
             # Control mode
             'use_dwa': True,
@@ -1114,6 +1118,29 @@ class ControllerNode(Node):
         start_y = msg.poses[0].pose.position.y
         goal_x = msg.poses[-1].pose.position.x
         goal_y = msg.poses[-1].pose.position.y
+        
+        # FIX 3: Path staleness detection - check if path start matches robot position
+        if self.odom is not None:
+            robot_x = self.odom.pose.pose.position.x
+            robot_y = self.odom.pose.pose.position.y
+            path_start_deviation = math.hypot(start_x - robot_x, start_y - robot_y)
+            
+            # Reject paths with stale start positions (> 0.5m from robot)
+            if path_start_deviation > 0.5:
+                self.get_logger().warn(
+                    f"🚫 Rejecting stale path: start deviation={path_start_deviation:.3f}m. "
+                    f"Path starts at ({start_x:.3f}, {start_y:.3f}), robot at ({robot_x:.3f}, {robot_y:.3f})"
+                )
+                self.path = None
+                self.path_received = False
+                return
+            elif path_start_deviation > 0.2:
+                # Log warning for moderate deviations
+                if self.debug_mode:
+                    self.get_logger().warn(
+                        f"⚠️ Path start deviation detected: {path_start_deviation:.3f}m "
+                        f"(path: ({start_x:.3f}, {start_y:.3f}), robot: ({robot_x:.3f}, {robot_y:.3f}))"
+                    )
 
         path_length = 0.0
         for i in range(len(msg.poses) - 1):
@@ -1450,17 +1477,52 @@ class ControllerNode(Node):
         # Negative angle_diff means target is to the right -> turn right (negative w = CW)
         rotate_threshold_rad = math.radians(self.rotate_in_place_angle_deg)
         
-        if abs(angle_diff) > rotate_threshold_rad:
-            # Large angle error - rotate in place before driving
-            v = 0.0
-            w = angle_diff * self.heading_kp
-            # Cap to max_heading_rate
-            w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
+        # FIX: For close-range goals (< 1m), use proportional control instead of rotate-then-move
+        if distance < 1.0:
+            # Close to goal - use gentle proportional control
+            v = min(self.max_linear_vel * 0.5, distance * 0.8)
+            w = angle_diff * self.heading_kp * 0.7  # Gentler turning
+            w = np.clip(w, -self.max_heading_rate * 0.6, self.max_heading_rate * 0.6)
+            
+            # Reset rotation timeout when moving forward
+            if abs(v) > 0.05:
+                self.rotation_start_time = None
+            
             if self.debug_mode:
                 self.get_logger().info(
-                    f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}"
+                    f"🎯 Close-range proportional: dist={distance:.2f}m, angle={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
+        elif abs(angle_diff) > rotate_threshold_rad:
+            # Large angle error - rotate in place before driving
+            # Check rotation timeout to prevent infinite spinning
+            current_time = time.monotonic()
+            if self.rotation_start_time is None:
+                self.rotation_start_time = current_time
+            
+            rotation_duration = current_time - self.rotation_start_time
+            if rotation_duration > self.rotation_timeout:
+                # Timeout exceeded - force forward movement to break deadlock
+                if self.debug_mode:
+                    self.get_logger().warn(
+                        f"⚠️ Rotation timeout ({rotation_duration:.1f}s) exceeded! Forcing forward movement."
+                    )
+                v = min(self.max_linear_vel * 0.4, distance * 0.5)
+                w = angle_diff * self.heading_kp * 0.5
+                w = np.clip(w, -self.max_heading_rate * 0.5, self.max_heading_rate * 0.5)
+                self.rotation_start_time = None  # Reset timeout
+            else:
+                v = 0.0
+                w = angle_diff * self.heading_kp
+                # Cap to max_heading_rate
+                w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
+                if self.debug_mode:
+                    self.get_logger().info(
+                        f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}, duration={rotation_duration:.1f}s"
+                    )
         else:
+            # Reset rotation timeout when not rotating in place
+            self.rotation_start_time = None
+            
             # Move forward with turning - use combined motion
             # Scale forward velocity based on alignment
             alignment_factor = max(0.3, 1.0 - abs(angle_diff) / rotate_threshold_rad)
