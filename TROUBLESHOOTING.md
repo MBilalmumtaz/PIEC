@@ -748,15 +748,21 @@ ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
 With `debug_mode: true`, the controller logs turn direction:
 
 ```
-📤 Cmd: v=0.500 m/s, w_raw=-0.300 rad/s [RIGHT (CW)] 
-→ w_corrected=0.300 rad/s [RIGHT (CW)] (sign_correction=-1.0)
+📤 Cmd: v=0.500 m/s, w_raw=0.300 rad/s [LEFT (CCW)] 
+→ w_corrected=-0.300 rad/s [LEFT (CCW)] (sign_correction=-1.0)
 ```
 
 This shows:
-- `w_raw`: Angular velocity computed by controller (standard ROS convention)
-- Turn direction before correction: `[RIGHT (CW)]` or `[LEFT (CCW)]`
-- `w_corrected`: Final angular velocity after sign correction
-- Turn direction after correction: Should match physical robot motion
+- `w_raw`: Angular velocity computed by controller (standard ROS convention: + = LEFT/CCW, - = RIGHT/CW)
+- Turn direction INTENT: `[LEFT (CCW)]` or `[RIGHT (CW)]` based on controller's computation
+- `w_corrected`: Final angular velocity after sign correction applied for Scout Mini
+- Turn direction RESULT: Physical motion on Scout Mini (sign flipped but intent preserved)
+
+**Example interpretation:**
+- Controller computes `w_raw=+0.3` for LEFT turn (standard ROS: positive = CCW)
+- Scout Mini needs negative value for CCW motion (inverted convention)
+- `sign_correction=-1.0` flips to `w_corrected=-0.3`
+- Result: Robot turns LEFT (CCW) as intended
 
 **Fixing Wrong Turn Direction:**
 
@@ -806,12 +812,14 @@ The sign correction is applied in `controller_node.py` at the final command publ
 
 ```python
 def publish_cmd(self, linear_vel, angular_vel):
-    # Compute angular velocity using standard ROS convention
-    # (positive = CCW/left, negative = CW/right)
-    raw_angular = angular_vel
+    # Store raw values for logging
+    raw_angular = float(angular_vel)
+    
+    # Apply scaling factor
+    angular_vel_scaled = raw_angular * self.angular_scale
     
     # Apply sign correction for platform-specific conventions
-    angular_vel = raw_angular * self.angular_scale * self.angular_sign
+    angular_vel = angular_vel_scaled * self.angular_sign
     
     # Publish corrected velocity
     msg.angular.z = angular_vel
