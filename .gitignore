@@ -21,3 +21,7 @@ devel/
 # OS
 .DS_Store
 Thumbs.db
+
+# Backup files
+*(copy).py
+*(copy)
