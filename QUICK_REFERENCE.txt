@@ -1,0 +1,79 @@
+================================================================================
+                    FILES EDITED IN THIS PR - QUICK REFERENCE
+================================================================================
+
+ONLY 2 FILES HAVE CODE CHANGES:
+--------------------------------
+
+1. src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini.urdf.xacro
+   └─ Line 56 & 62: Changed yaw from 1.57 to -1.57
+   └─ Purpose: Fixes visual orientation in RViz
+
+2. src/piec_controller/piec_controller/controller_node.py
+   └─ Line 275: Changed require_explicit_goal from True to False
+   └─ Purpose: Allows autonomous path following
+
+
+ALL OTHER FILES ARE DOCUMENTATION:
+-----------------------------------
+
+Documentation Files (in root directory):
+  - README.md
+  - TROUBLESHOOTING.md
+  - PR_SUMMARY.md
+  - SIMPLE_FIX_SUMMARY.md
+  - VISUAL_ORIENTATION_FIX.md
+  - PATH_FOLLOWING_FIX.md
+  - FILES_EDITED_IN_PR.md (this summary)
+  - EXACT_CHANGES.md (detailed changes)
+
+Helper Scripts (in root directory):
+  - calibrate_magnetometer.py
+  - check_imu_orientation.py
+  - diagnose_frames.py
+  - diagnose_imu.py
+  - manual_goal_setter.py
+
+
+TO CHANGE THESE FILES BACK:
+----------------------------
+
+Option 1 - Manual Edit:
+  Edit: src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini.urdf.xacro
+    Change: rpy="1.57 0 -1.57"
+    To:     rpy="1.57 0 1.57"
+
+  Edit: src/piec_controller/piec_controller/controller_node.py
+    Change: 'require_explicit_goal': False,
+    To:     'require_explicit_goal': True,
+
+Option 2 - Git Revert:
+  git checkout <original-branch> -- src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini.urdf.xacro
+  git checkout <original-branch> -- src/piec_controller/piec_controller/controller_node.py
+
+
+VERIFICATION:
+-------------
+
+After changes, test:
+  # Visual orientation
+  ros2 launch agilex_scout scout_robot_lidar.launch.py
+  ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"
+  → Robot should move forward in RViz
+
+  # Path following
+  ros2 param get /enhanced_piec_controller require_explicit_goal
+  → Should return: Boolean value is: False
+
+
+QUESTIONS?
+----------
+
+Read these files for details:
+  - FILES_EDITED_IN_PR.md  (comprehensive guide)
+  - EXACT_CHANGES.md       (exact code diffs)
+
+================================================================================
+                              THAT'S IT!
+                    Only 2 files, 3 lines of code changed
+================================================================================
