@@ -307,6 +307,7 @@ class ControllerNode(Node):
             
             # Path validation parameters
             'path_staleness_threshold': 0.5,  # Maximum allowed deviation between path start and robot position (meters)
+            'path_staleness_warning_threshold': 0.2,  # Warning threshold for path start deviation (meters)
             
             # Control mode
             'use_dwa': True,
@@ -380,6 +381,7 @@ class ControllerNode(Node):
         
         # Path validation parameters
         self.path_staleness_threshold = float(self.get_parameter('path_staleness_threshold').value)
+        self.path_staleness_warning_threshold = float(self.get_parameter('path_staleness_warning_threshold').value)
         
         # Control mode
         self.use_dwa = self.get_parameter('use_dwa').value
@@ -1143,7 +1145,7 @@ class ControllerNode(Node):
                 self.path = None
                 self.path_received = False
                 return
-            elif path_start_deviation > 0.2:
+            elif path_start_deviation > self.path_staleness_warning_threshold:
                 # Log warning for moderate deviations
                 if self.debug_mode:
                     self.get_logger().warn(

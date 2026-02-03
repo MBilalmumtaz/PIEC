@@ -2221,7 +2221,7 @@ class CompletePathOptimizer(Node):
             elif start_deviation > PATH_START_WARNING_THRESHOLD:
                 # Log warning for moderate deviations without correction
                 if self.debug_mode:
-                    self.get_logger().debug(
+                    self.get_logger().warn(
                         f"Path start deviation: {start_deviation:.3f}m "
                         f"(within tolerance, no correction needed)"
                     )
