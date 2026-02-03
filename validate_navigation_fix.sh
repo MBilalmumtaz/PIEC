@@ -46,8 +46,10 @@ if grep -q "Translation:" /tmp/tf_check.log; then
     YAW=$(grep "yaw:" /tmp/tf_check.log | grep -oP '[-]?\d*\.?\d+' | head -1 || echo "")
     
     # Check if z is approximately 0.2 (allow 0.15-0.25)
-    if [ -n "$Z_TRANS" ]; then
-        if (( $(echo "$Z_TRANS > 0.15" | bc -l) )) && (( $(echo "$Z_TRANS < 0.25" | bc -l) )); then
+    # Use awk for floating-point comparison to avoid bc syntax errors
+    if [ -n "$Z_TRANS" ] && [ "$Z_TRANS" != "" ]; then
+        Z_OK=$(awk -v z="$Z_TRANS" 'BEGIN { if (z > 0.15 && z < 0.25) print "1"; else print "0" }')
+        if [ "$Z_OK" = "1" ]; then
             echo -e "${GREEN}✓ IMU z-height = ${Z_TRANS}m (expected ~0.2m)${NC}"
         else
             echo -e "${RED}✗ IMU z-height = ${Z_TRANS}m (expected ~0.2m)${NC}"
@@ -56,9 +58,11 @@ if grep -q "Translation:" /tmp/tf_check.log; then
         echo -e "${YELLOW}⚠ Could not parse IMU z-height${NC}"
     fi
     
-    # Check if yaw is approximately -0.94 (allow -1.1 to -0.75)
-    if [ -n "$YAW" ]; then
-        if (( $(echo "$YAW < -0.75" | bc -l) )) && (( $(echo "$YAW > -1.15" | bc -l) )); then
+    # Check if yaw is approximately -0.94 (allow -1.15 to -0.75)
+    # Use awk for floating-point comparison to avoid bc syntax errors
+    if [ -n "$YAW" ] && [ "$YAW" != "" ]; then
+        YAW_OK=$(awk -v y="$YAW" 'BEGIN { if (y < -0.75 && y > -1.15) print "1"; else print "0" }')
+        if [ "$YAW_OK" = "1" ]; then
             echo -e "${GREEN}✓ IMU yaw = ${YAW} rad (expected ~-0.94 rad)${NC}"
         else
             echo -e "${YELLOW}⚠ IMU yaw = ${YAW} rad (expected ~-0.94 rad)${NC}"

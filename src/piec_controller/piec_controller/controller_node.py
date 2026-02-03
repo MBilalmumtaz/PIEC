@@ -1753,9 +1753,17 @@ class ControllerNode(Node):
         """Fixed publish command with calibration and motor health tracking"""
         msg = Twist()
         
+        # Store raw values for logging
+        raw_linear = float(linear_vel)
+        raw_angular = float(angular_vel)
+        
         # APPLY CALIBRATION FACTORS
-        linear_vel = float(linear_vel) * self.linear_scale
-        angular_vel = float(angular_vel) * self.angular_scale * self.angular_sign
+        linear_vel = raw_linear * self.linear_scale
+        
+        # CRITICAL: Apply angular_sign_correction to flip angular velocity sign if needed
+        # This corrects for platform-specific rotation conventions (e.g., Scout Mini CW/CCW)
+        angular_vel_scaled = raw_angular * self.angular_scale
+        angular_vel = angular_vel_scaled * self.angular_sign
         
         # Clamp to limits
         linear_vel = np.clip(linear_vel, -self.max_linear_vel, self.max_linear_vel)
@@ -1779,11 +1787,21 @@ class ControllerNode(Node):
         msg.linear.x = linear_vel
         msg.angular.z = angular_vel
         
-        # Log calibration with velocity comparison
+        # Enhanced logging with sign correction diagnostics
         if self.debug_mode and self.control_counter % 20 == 0:
+            # Determine turn direction
+            turn_dir = "NONE"
+            if abs(raw_angular) > 0.01:
+                turn_dir = "LEFT (CCW)" if raw_angular > 0 else "RIGHT (CW)"
+            
+            corrected_dir = "NONE"
+            if abs(angular_vel) > 0.01:
+                corrected_dir = "LEFT (CCW)" if angular_vel > 0 else "RIGHT (CW)"
+            
             self.get_logger().info(
-                f"📤 Command (calibrated): v={linear_vel:.3f}, w={angular_vel:.3f} "
-                f"(raw: {linear_vel/self.linear_scale:.3f}, {angular_vel/(self.angular_scale*self.angular_sign):.3f})"
+                f"📤 Cmd: v={linear_vel:.3f} m/s, w_raw={raw_angular:.3f} rad/s [{turn_dir}] "
+                f"→ w_corrected={angular_vel:.3f} rad/s [{corrected_dir}] "
+                f"(sign_correction={self.angular_sign:.1f})"
             )
             
             # Show velocity comparison if we have actual velocity
