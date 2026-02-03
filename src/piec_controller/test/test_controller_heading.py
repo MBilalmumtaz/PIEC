@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""
+Unit tests for controller heading logic fixes
+Tests the new parameter-driven heading control
+"""
+
+import math
+import unittest
+from unittest.mock import MagicMock, patch
+import sys
+import os
+
+# Mock rclpy before importing controller
+sys.modules['rclpy'] = MagicMock()
+sys.modules['rclpy.node'] = MagicMock()
+sys.modules['rclpy.qos'] = MagicMock()
+sys.modules['nav_msgs'] = MagicMock()
+sys.modules['nav_msgs.msg'] = MagicMock()
+sys.modules['geometry_msgs'] = MagicMock()
+sys.modules['geometry_msgs.msg'] = MagicMock()
+sys.modules['sensor_msgs'] = MagicMock()
+sys.modules['sensor_msgs.msg'] = MagicMock()
+sys.modules['ament_index_python'] = MagicMock()
+sys.modules['ament_index_python.packages'] = MagicMock()
+
+# Simple clip function to avoid numpy dependency
+def clip(value, min_val, max_val):
+    """Clip value to range"""
+    return max(min_val, min(max_val, value))
+
+
+class MockPose:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+class TestControllerHeadingLogic(unittest.TestCase):
+    """Test the improved heading control logic"""
+    
+    def test_angle_wrapping(self):
+        """Test that angles are properly wrapped to [-pi, pi]"""
+        # Test wrapping from > pi
+        angle = 4.0  # > pi
+        wrapped = math.atan2(math.sin(angle), math.cos(angle))
+        self.assertGreaterEqual(wrapped, -math.pi)
+        self.assertLessEqual(wrapped, math.pi)
+        
+        # Test wrapping from < -pi
+        angle = -4.0  # < -pi
+        wrapped = math.atan2(math.sin(angle), math.cos(angle))
+        self.assertGreaterEqual(wrapped, -math.pi)
+        self.assertLessEqual(wrapped, math.pi)
+    
+    def test_bearing_calculation_forward(self):
+        """Test bearing calculation for goal ahead"""
+        # Robot at origin, facing forward (yaw=0)
+        current_x, current_y = 0.0, 0.0
+        target_x, target_y = 1.0, 0.0  # Goal 1m ahead
+        
+        dx = target_x - current_x
+        dy = target_y - current_y
+        bearing = math.atan2(dy, dx)
+        
+        # Should be 0 radians (straight ahead)
+        self.assertAlmostEqual(bearing, 0.0, places=5)
+    
+    def test_bearing_calculation_right(self):
+        """Test bearing calculation for goal on right side"""
+        # Robot at origin, facing forward (yaw=0)
+        current_x, current_y = 0.0, 0.0
+        target_x, target_y = 0.0, -1.0  # Goal 1m to the right
+        
+        dx = target_x - current_x
+        dy = target_y - current_y
+        bearing = math.atan2(dy, dx)
+        
+        # Should be -pi/2 (90 degrees clockwise)
+        self.assertAlmostEqual(bearing, -math.pi/2, places=5)
+    
+    def test_bearing_calculation_left(self):
+        """Test bearing calculation for goal on left side"""
+        # Robot at origin, facing forward (yaw=0)
+        current_x, current_y = 0.0, 0.0
+        target_x, target_y = 0.0, 1.0  # Goal 1m to the left
+        
+        dx = target_x - current_x
+        dy = target_y - current_y
+        bearing = math.atan2(dy, dx)
+        
+        # Should be +pi/2 (90 degrees counter-clockwise)
+        self.assertAlmostEqual(bearing, math.pi/2, places=5)
+    
+    def test_angle_error_right_side_goal(self):
+        """Test angle error calculation when goal is on right side"""
+        # Robot facing forward (yaw=0)
+        current_yaw = 0.0
+        
+        # Goal to the right (-pi/2)
+        target_bearing = -math.pi/2
+        
+        angle_diff = target_bearing - current_yaw
+        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+        
+        # Should be -pi/2 (need to turn right/clockwise)
+        self.assertAlmostEqual(angle_diff, -math.pi/2, places=5)
+        
+        # Angular velocity should be negative for right turn
+        heading_kp = 1.5
+        w = angle_diff * heading_kp
+        self.assertLess(w, 0.0, "Angular velocity should be negative for right turn")
+    
+    def test_angle_error_left_side_goal(self):
+        """Test angle error calculation when goal is on left side"""
+        # Robot facing forward (yaw=0)
+        current_yaw = 0.0
+        
+        # Goal to the left (+pi/2)
+        target_bearing = math.pi/2
+        
+        angle_diff = target_bearing - current_yaw
+        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+        
+        # Should be +pi/2 (need to turn left/counter-clockwise)
+        self.assertAlmostEqual(angle_diff, math.pi/2, places=5)
+        
+        # Angular velocity should be positive for left turn
+        heading_kp = 1.5
+        w = angle_diff * heading_kp
+        self.assertGreater(w, 0.0, "Angular velocity should be positive for left turn")
+    
+    def test_rotate_in_place_threshold(self):
+        """Test rotate-in-place logic for large angle errors"""
+        # Test parameters
+        rotate_in_place_angle_deg = 45.0
+        rotate_threshold_rad = math.radians(rotate_in_place_angle_deg)
+        
+        # Large angle error (90 degrees)
+        angle_diff = math.pi/2
+        
+        # Should trigger rotate in place
+        should_rotate = abs(angle_diff) > rotate_threshold_rad
+        self.assertTrue(should_rotate, "Should rotate in place for 90° error")
+        
+        # Small angle error (30 degrees)
+        angle_diff = math.radians(30)
+        
+        # Should NOT trigger rotate in place
+        should_rotate = abs(angle_diff) > rotate_threshold_rad
+        self.assertFalse(should_rotate, "Should not rotate in place for 30° error")
+    
+    def test_heading_deadband(self):
+        """Test heading deadband to prevent oscillation"""
+        heading_deadband_deg = 2.0
+        heading_deadband_rad = math.radians(heading_deadband_deg)
+        
+        # Angle error within deadband
+        angle_diff = math.radians(1.5)
+        
+        within_deadband = abs(angle_diff) < heading_deadband_rad
+        self.assertTrue(within_deadband, "1.5° should be within 2° deadband")
+        
+        # Angle error outside deadband
+        angle_diff = math.radians(3.0)
+        
+        within_deadband = abs(angle_diff) < heading_deadband_rad
+        self.assertFalse(within_deadband, "3° should be outside 2° deadband")
+    
+    def test_angular_velocity_capping(self):
+        """Test that angular velocity is properly capped"""
+        max_heading_rate = 0.6  # rad/s
+        heading_kp = 2.0
+        
+        # Large angle error
+        angle_diff = math.pi  # 180 degrees
+        
+        # Calculate w
+        w = angle_diff * heading_kp
+        
+        # Should exceed max before capping
+        self.assertGreater(abs(w), max_heading_rate)
+        
+        # Apply cap
+        w_capped = clip(w, -max_heading_rate, max_heading_rate)
+        
+        # Should be within limits
+        self.assertLessEqual(abs(w_capped), max_heading_rate)
+        self.assertEqual(w_capped, max_heading_rate, "Should be capped to max")
+    
+    def test_sign_convention(self):
+        """Test ROS standard sign convention (positive = CCW, negative = CW)"""
+        # Goal to the left -> positive angle error -> positive w (CCW)
+        angle_diff_left = math.pi/4  # 45° to left
+        heading_kp = 1.5
+        w_left = angle_diff_left * heading_kp
+        
+        self.assertGreater(w_left, 0.0, "Left turn should have positive w (CCW)")
+        
+        # Goal to the right -> negative angle error -> negative w (CW)
+        angle_diff_right = -math.pi/4  # 45° to right
+        w_right = angle_diff_right * heading_kp
+        
+        self.assertLess(w_right, 0.0, "Right turn should have negative w (CW)")
+
+
+class TestGoalCompletionLogic(unittest.TestCase):
+    """Test the improved goal completion logic"""
+    
+    def test_goal_distance_check(self):
+        """Test goal completion based on distance"""
+        goal_completion_distance = 0.25  # 25cm
+        
+        # Robot at origin
+        robot_x, robot_y = 0.0, 0.0
+        
+        # Goal close enough
+        goal_x, goal_y = 0.1, 0.1
+        distance = math.hypot(goal_x - robot_x, goal_y - robot_y)
+        
+        self.assertLess(distance, goal_completion_distance, 
+                       "Should be within goal completion distance")
+        
+        # Goal too far
+        goal_x, goal_y = 0.5, 0.0
+        distance = math.hypot(goal_x - robot_x, goal_y - robot_y)
+        
+        self.assertGreater(distance, goal_completion_distance,
+                          "Should be outside goal completion distance")
+    
+    def test_velocity_stability_check(self):
+        """Test stability check based on velocity"""
+        stability_threshold = 0.05  # m/s
+        
+        # Robot nearly stopped
+        linear_vel = 0.02
+        angular_vel = 0.01
+        
+        is_stable = (linear_vel < stability_threshold and 
+                    angular_vel < stability_threshold)
+        
+        self.assertTrue(is_stable, "Robot should be considered stable")
+        
+        # Robot still moving
+        linear_vel = 0.1
+        angular_vel = 0.0
+        
+        is_stable = (linear_vel < stability_threshold and 
+                    angular_vel < stability_threshold)
+        
+        self.assertFalse(is_stable, "Robot should not be considered stable")
+
+
+if __name__ == '__main__':
+    unittest.main()

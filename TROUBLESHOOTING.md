@@ -446,6 +446,150 @@ ros2 topic hz /imu       # Should be ~100 Hz
 
 ---
 
+### 6. Controller and Path Following Issues
+
+#### 6A. Robot Fails to Reach Goals (Especially on Right Side)
+
+**Symptom:** Robot receives a path but fails to follow it, especially when the goal is to the robot's right side. May show oscillation, drift away from goal, or trigger recovery behaviors in open space.
+
+**Diagnosis:**
+```bash
+# 1. Run controller diagnostics (requires workspace rebuild after pulling PR)
+# If not built yet: cd ~/scoutmini_ws3 && colcon build --packages-select piec_bringup
+ros2 run piec_bringup controller_diagnostics
+
+# This will show:
+# - Current robot pose and yaw
+# - Goal position and bearing
+# - Angle error and expected turn direction
+# - Whether controller is turning the correct way
+
+# 2. Monitor controller output
+ros2 topic echo /cmd_vel_piec
+
+# 3. Check path published by optimizer
+ros2 topic echo /piec/path --field poses
+
+# 4. Verify turn direction manually
+# Test CCW turn (should be positive w):
+ros2 topic pub --once /cmd_vel_piec geometry_msgs/Twist "{linear: {x: 0.0}, angular: {z: 0.3}}"
+# Robot should turn LEFT (counter-clockwise)
+
+# Test CW turn (should be negative w):
+ros2 topic pub --once /cmd_vel_piec geometry_msgs/Twist "{linear: {x: 0.0}, angular: {z: -0.3}}"
+# Robot should turn RIGHT (clockwise)
+```
+
+**Common Symptoms and Fixes:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Goal on right → robot turns left | Wrong angular sign | Set `angular_sign_correction: -1.0` in launch file |
+| Robot oscillates near straight paths | Heading deadband too small | Increase `heading_deadband_deg: 3.0` |
+| Robot doesn't turn aggressively enough | Low heading gain | Increase `heading_kp: 2.0` |
+| Robot rotates too fast | High heading gain | Decrease `heading_kp: 1.0` or `max_heading_rate: 0.4` |
+| Goal on side → robot fails to rotate | Rotate threshold too high | Decrease `rotate_in_place_angle_deg: 30.0` |
+| Robot overshoots goal | Goal completion distance too small | Increase `goal_completion_distance: 0.35` |
+
+**Controller Parameters (in `piec_real_robot.launch.py`):**
+```python
+# Heading control tuning
+"heading_kp": 1.5,                    # Proportional gain for turning
+"heading_deadband_deg": 2.0,          # Ignore angle errors < 2°
+"max_heading_rate": 0.6,              # Max angular velocity (rad/s)
+"rotate_in_place_angle_deg": 45.0,   # Rotate in place if error > 45°
+
+# Goal completion
+"goal_completion_distance": 0.25,     # Distance threshold (meters)
+"goal_stability_time": 2.0,           # Time stable before completion (seconds)
+
+# Robot-specific calibration
+"linear_scale_factor": 0.95,          # Compensate for motor response
+"angular_scale_factor": 0.99,         # Compensate for angular response
+"angular_sign_correction": 1.0,       # 1.0 or -1.0 to flip turn direction
+```
+
+#### 6B. Path Following in Wrong Direction
+
+**Symptom:** Robot receives a path and starts moving, but turns the wrong way (e.g., turns left when goal is on right).
+
+**Diagnosis:**
+```bash
+# Check controller diagnostics
+ros2 run piec_bringup controller_diagnostics
+
+# Look for "SIGN MISMATCH" error in output
+# This indicates angle_error and angular_velocity have opposite signs
+```
+
+**Fix:**
+Flip the angular sign correction in `piec_real_robot.launch.py`:
+```python
+"angular_sign_correction": -1.0,  # Changed from 1.0
+```
+
+#### 6C. Robot Gets Stuck or Enters Recovery in Open Space
+
+**Symptom:** No obstacles nearby, but robot triggers stuck detection or recovery behaviors.
+
+**Diagnosis:**
+```bash
+# Check if robot is making progress
+ros2 topic echo /ukf/odom --field pose.pose.position
+
+# Monitor controller state
+ros2 topic echo /piec/path --field header.stamp
+```
+
+**Causes:**
+1. **Path not updating** - Optimizer not running or stuck
+2. **Heading oscillation** - Robot overshooting desired heading
+3. **Parameter mismatch** - `require_explicit_goal: True` blocking path following
+
+**Fix:**
+1. **Ensure autonomous mode:**
+   ```python
+   # In piec_real_robot.launch.py:
+   "require_explicit_goal": False,  # Must be False for auto path following
+   ```
+
+2. **Reduce oscillation:**
+   ```python
+   "heading_deadband_deg": 3.0,     # Increase deadband
+   "heading_kp": 1.2,                # Reduce gain
+   ```
+
+3. **Check optimizer is running:**
+   ```bash
+   ros2 node list | grep optimizer
+   ros2 topic hz /piec/path  # Should be ~1-2 Hz
+   ```
+
+#### 6D. QoS Incompatibility Warnings
+
+**Symptom:** Logs show QoS warnings like "New publisher discovered on topic '/scan', offering incompatible QoS."
+
+**Diagnosis:**
+```bash
+# Check QoS profile of publishers and subscribers
+ros2 topic info /scan -v
+ros2 topic info /scan_processed -v
+ros2 topic info /scan_fixed -v
+```
+
+**Fix:**
+Ensure all nodes use consistent scan topics. In `piec_real_robot.launch.py`:
+```python
+# Controller should use processed scan
+"scan_topic": "/scan_processed",
+
+# Emergency stop should use fixed scan
+# (in emergency_stop node)
+"scan_topic": "/scan_fixed",
+```
+
+---
+
 ## Advanced Debugging
 
 ### Enable Full Debug Logging

@@ -262,13 +262,20 @@ def generate_launch_description():
             "angular_scale_factor": 0.99,
             "angular_sign_correction": 1.0,
             "debug_mode": True,
-            "require_explicit_goal": True,
+            "require_explicit_goal": False,  # Changed from True to False for autonomous path following
             "path_topic": "/piec/path",
             "cmd_vel_topic": "/cmd_vel_piec",
             "odom_topic": "/ukf/odom",
+            "scan_topic": "/scan_processed",  # Use consistent scan topic to avoid QoS warnings
             "use_sim_time": use_sim_time,
             "use_dwa": False,
             "use_pinn_in_controller": False,
+            # New heading control parameters
+            "heading_kp": 1.5,
+            "heading_deadband_deg": 2.0,
+            "max_heading_rate": 0.6,
+            "rotate_in_place_angle_deg": 45.0,
+            "goal_stability_time": 2.0,
         }],
     )
     ld.add_action(controller_node)
