@@ -22,6 +22,6 @@ devel/
 .DS_Store
 Thumbs.db
 
-# Backup files
-*(copy).py
-*(copy)
+# Backup files - match files with " (copy)" in name
+* (copy).py
+* (copy)

@@ -42,8 +42,8 @@ echo ""
 echo "3. Checking base_link→imu_link transform..."
 timeout 5 ros2 run tf2_ros tf2_echo base_link imu_link > /tmp/tf_check.log 2>&1
 if grep -q "Translation:" /tmp/tf_check.log; then
-    Z_TRANS=$(grep "z:" /tmp/tf_check.log | head -1 | grep -oP '\d+\.\d+' || echo "")
-    YAW=$(grep "yaw:" /tmp/tf_check.log | grep -oP '[-]?\d+\.\d+' | head -1 || echo "")
+    Z_TRANS=$(grep "z:" /tmp/tf_check.log | head -1 | grep -oP '[-]?\d*\.?\d+' || echo "")
+    YAW=$(grep "yaw:" /tmp/tf_check.log | grep -oP '[-]?\d*\.?\d+' | head -1 || echo "")
     
     # Check if z is approximately 0.2 (allow 0.15-0.25)
     if [ -n "$Z_TRANS" ]; then
