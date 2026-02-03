@@ -7,6 +7,13 @@ import numpy as np
 import math
 import time
 
+# Progressive rotation threshold constants (in meters and radians)
+ROTATION_THRESHOLD_FAR_DISTANCE = 2.0  # Distance threshold for far range (meters)
+ROTATION_THRESHOLD_MID_DISTANCE = 0.5  # Distance threshold for mid range (meters)
+ROTATION_THRESHOLD_FAR_ANGLE = 90  # Rotation threshold when far from goal (degrees)
+ROTATION_THRESHOLD_MID_ANGLE = 60  # Rotation threshold in mid range (degrees)
+ROTATION_THRESHOLD_CLOSE_ANGLE = 30  # Rotation threshold when close to goal (degrees)
+
 
 class DynamicDWAComplete:
     def __init__(self, node, emergency_distance=0.2):
@@ -456,7 +463,7 @@ class DynamicDWAComplete:
         return min_clearance if min_clearance < float('inf') else 0.0
 
     def fallback_control(self, current_pose, path):
-        """Fallback control when DWA fails"""
+        """Fallback control when DWA fails - IMPROVED for large heading errors"""
         if path is None or len(path.poses) == 0:
             return 0.0, 0.0
         
@@ -477,11 +484,25 @@ class DynamicDWAComplete:
         angle_diff = target_angle - theta
         angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
         
+        # Distance to final goal for progressive threshold reduction
+        goal_x = path.poses[-1].pose.position.x
+        goal_y = path.poses[-1].pose.position.y
+        goal_distance = math.hypot(goal_x - x, goal_y - y)
+        
+        # FIX: Progressive rotation threshold - reduce as robot approaches goal
+        # Far from goal: 90°, Close to goal (< 2m): 60°, Very close (< 0.5m): 30°
+        if goal_distance > ROTATION_THRESHOLD_FAR_DISTANCE:
+            rotation_threshold = math.radians(ROTATION_THRESHOLD_FAR_ANGLE)
+        elif goal_distance > ROTATION_THRESHOLD_MID_DISTANCE:
+            rotation_threshold = math.radians(ROTATION_THRESHOLD_MID_ANGLE)
+        else:
+            rotation_threshold = math.radians(ROTATION_THRESHOLD_CLOSE_ANGLE)
+        
         if distance < 0.3:
             v = 0.0
             w = 0.0
-        elif abs(angle_diff) > math.radians(75):
-            # Turn in place
+        elif abs(angle_diff) > rotation_threshold:
+            # Turn in place for large errors
             v = 0.0
             w = np.clip(angle_diff * 0.7, -self.max_w * 0.6, self.max_w * 0.6)
         else:

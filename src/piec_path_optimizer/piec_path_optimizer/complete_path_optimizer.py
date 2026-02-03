@@ -47,6 +47,10 @@ from objectives import ObjectiveEvaluator
 from uncertainty_aware import UncertaintyAwarePlanner
 from nsga2 import fast_non_dominated_sort, crowding_distance, nsga2_selection
 
+# Path validation constants
+PATH_START_DEVIATION_THRESHOLD = 0.1  # meters - threshold for auto-correcting path start
+PATH_START_WARNING_THRESHOLD = 0.2  # meters - threshold for logging warnings
+
 
 def dominates(a, b):
     """Return True if a dominates b"""
@@ -2198,7 +2202,31 @@ class CompletePathOptimizer(Node):
         if path_points is None or len(path_points) == 0:
             return
         
-        # CRITICAL FIX: Ensure last point is actual goal
+        # CRITICAL FIX 1: Ensure path starts from CURRENT robot position (not stale position)
+        if self.robot_pose is not None:
+            current_x = self.robot_pose.pose.pose.position.x
+            current_y = self.robot_pose.pose.pose.position.y
+            start_x, start_y = path_points[0]
+            
+            # Check if path start is too far from current position (staleness check)
+            start_deviation = math.hypot(start_x - current_x, start_y - current_y)
+            if start_deviation > PATH_START_DEVIATION_THRESHOLD:
+                if self.debug_mode:
+                    self.get_logger().warn(
+                        f"⚠️ Path start mismatch detected: deviation={start_deviation:.3f}m. "
+                        f"Correcting path[0] from ({start_x:.3f}, {start_y:.3f}) to ({current_x:.3f}, {current_y:.3f})"
+                    )
+                # Force path to start from current position
+                path_points[0] = (current_x, current_y)
+            elif start_deviation > PATH_START_WARNING_THRESHOLD:
+                # Log warning for moderate deviations without correction
+                if self.debug_mode:
+                    self.get_logger().warn(
+                        f"Path start deviation: {start_deviation:.3f}m "
+                        f"(within tolerance, no correction needed)"
+                    )
+        
+        # CRITICAL FIX 2: Ensure last point is actual goal
         if self.goal_position and len(path_points) > 0:
             goal_x, goal_y = self.goal_position
             last_x, last_y = path_points[-1]
