@@ -27,7 +27,7 @@
         <parent link="mobile_robot_base_link" />
         <child link="${wheel_prefix}_wheel_link" />
         <xacro:insert_block name="joint_pose"/>
-        <axis xyz="0 0 -1" rpy="0 0 0" />
+        <axis xyz="0 0 1" rpy="0 0 0" />
         <dynamics damping="0.0" friction="20" />
       </joint>
     </xacro:if>
@@ -37,7 +37,7 @@
         <parent link="mobile_robot_base_link" />
         <child link="${wheel_prefix}_wheel_link" />
         <xacro:insert_block name="joint_pose"/>
-        <axis xyz="0 0 -1" rpy="0 0 0" />
+        <axis xyz="0 0 1" rpy="0 0 0" />
       </joint>
     </xacro:unless>
     

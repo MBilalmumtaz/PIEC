@@ -240,7 +240,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='base_to_imu_tf',
-        arguments=['0', '0', '0.2', '0', '0', '-0.84', 'base_link', 'imu_link'],
+        arguments=['0', '0', '0.2', '0', '0', '-0.94', 'base_link', 'imu_link'],
         parameters=[{'use_sim_time': use_sim_time}],
         condition=IfCondition(use_imu)
     )

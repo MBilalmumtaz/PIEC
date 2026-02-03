@@ -87,7 +87,7 @@ class ControllerNode(Node):
         self.last_explicit_goal = None
         self.explicit_goal_timeout = 30.0
         self.goal_reached = False
-        self.goal_completion_distance = 0.30  # Increased to 30cm for better completion
+        self.goal_completion_distance = 0.40  # Increased to 40cm for more reliable completion
         self.goal_position = None
         self.goal_reached_time = None
         self.goal_stopped = False
@@ -118,7 +118,7 @@ class ControllerNode(Node):
         self.stuck_detected = False
         self.stuck_start_time = None
         self.stuck_threshold_distance = 0.08  # Slightly increased
-        self.stuck_threshold_time = 8.0  # Increased to reduce false positives
+        self.stuck_threshold_time = 10.0  # Increased to reduce false positives
         self.recovery_mode = False
         self.recovery_start_time = None
         self.recovery_duration = 4.0
@@ -611,9 +611,9 @@ class ControllerNode(Node):
                 self.get_logger().warn("⚠️ Motors unresponsive - hardware issue detected, skipping recovery")
             return
         
-        # Grace period after goal - increased to 12 seconds
+        # Grace period after goal - reduced to 6 seconds for better responsiveness
         time_since_goal = time.monotonic() - self.goal_received_time
-        if time_since_goal < 12.0:  # Increased from 10 to 12 second grace period
+        if time_since_goal < 6.0:  # Reduced from 12 to 6 second grace period
             return
         
         # Only check stuck if we have enough position data
@@ -707,9 +707,9 @@ class ControllerNode(Node):
                 self.get_logger().debug("⚠️ Motors unresponsive - skipping oscillation check")
             return False
         
-        # Grace period after new goal - increased to 10 seconds
+        # Grace period after new goal - reduced to 5 seconds for better responsiveness
         time_since_goal = time.monotonic() - self.goal_received_time
-        if time_since_goal < 10.0:  # Increased from 8 to 10 second grace period
+        if time_since_goal < 5.0:  # Reduced from 10 to 5 second grace period
             return False
         
         # Need sufficient data

@@ -49,13 +49,13 @@
     <!-- Base link with visual mesh -->
     <link name="mobile_robot_base_link">
       <visual>
-        <origin xyz="0 0 0" rpy="1.57 0 1.57"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
           <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/scout_mini_base_link2.dae" />
         </geometry>
       </visual>
       <collision>
-        <origin xyz="0 0 0" rpy="1.57 0 1.57"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
         <geometry>
           <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/scout_mini_base_link2.dae" />
         </geometry>
