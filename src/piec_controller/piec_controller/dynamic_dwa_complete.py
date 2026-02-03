@@ -7,6 +7,13 @@ import numpy as np
 import math
 import time
 
+# Progressive rotation threshold constants (in meters and radians)
+ROTATION_THRESHOLD_FAR_DISTANCE = 2.0  # Distance threshold for far range (meters)
+ROTATION_THRESHOLD_MID_DISTANCE = 0.5  # Distance threshold for mid range (meters)
+ROTATION_THRESHOLD_FAR_ANGLE = 90  # Rotation threshold when far from goal (degrees)
+ROTATION_THRESHOLD_MID_ANGLE = 60  # Rotation threshold in mid range (degrees)
+ROTATION_THRESHOLD_CLOSE_ANGLE = 30  # Rotation threshold when close to goal (degrees)
+
 
 class DynamicDWAComplete:
     def __init__(self, node, emergency_distance=0.2):
@@ -484,12 +491,12 @@ class DynamicDWAComplete:
         
         # FIX: Progressive rotation threshold - reduce as robot approaches goal
         # Far from goal: 90°, Close to goal (< 2m): 60°, Very close (< 0.5m): 30°
-        if goal_distance > 2.0:
-            rotation_threshold = math.radians(90)
-        elif goal_distance > 0.5:
-            rotation_threshold = math.radians(60)
+        if goal_distance > ROTATION_THRESHOLD_FAR_DISTANCE:
+            rotation_threshold = math.radians(ROTATION_THRESHOLD_FAR_ANGLE)
+        elif goal_distance > ROTATION_THRESHOLD_MID_DISTANCE:
+            rotation_threshold = math.radians(ROTATION_THRESHOLD_MID_ANGLE)
         else:
-            rotation_threshold = math.radians(30)
+            rotation_threshold = math.radians(ROTATION_THRESHOLD_CLOSE_ANGLE)
         
         if distance < 0.3:
             v = 0.0

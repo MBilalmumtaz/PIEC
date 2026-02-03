@@ -151,7 +151,6 @@ class ControllerNode(Node):
         
         # Rotation timeout tracking to prevent infinite spinning
         self.rotation_start_time = None
-        self.rotation_timeout = 10.0  # Maximum time to spend rotating in place (seconds)
         self.free_space_escape_preferred = True
         
         # Oscillation detection - NEW
@@ -303,6 +302,11 @@ class ControllerNode(Node):
             'heading_deadband_deg': 2.0,  # Deadband for small angle errors (degrees)
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
             'rotate_in_place_angle_deg': 90.0,  # Rotate in place if angle error > this (degrees) - INCREASED from 45° to reduce oscillation
+            'rotation_timeout': 10.0,  # Maximum time to spend rotating in place (seconds)
+            'close_range_distance': 1.0,  # Distance threshold for close-range proportional control (meters)
+            
+            # Path validation parameters
+            'path_staleness_threshold': 0.5,  # Maximum allowed deviation between path start and robot position (meters)
             
             # Control mode
             'use_dwa': True,
@@ -371,6 +375,11 @@ class ControllerNode(Node):
         self.heading_deadband_deg = float(self.get_parameter('heading_deadband_deg').value)
         self.max_heading_rate = float(self.get_parameter('max_heading_rate').value)
         self.rotate_in_place_angle_deg = float(self.get_parameter('rotate_in_place_angle_deg').value)
+        self.rotation_timeout = float(self.get_parameter('rotation_timeout').value)
+        self.close_range_distance = float(self.get_parameter('close_range_distance').value)
+        
+        # Path validation parameters
+        self.path_staleness_threshold = float(self.get_parameter('path_staleness_threshold').value)
         
         # Control mode
         self.use_dwa = self.get_parameter('use_dwa').value
@@ -1125,8 +1134,8 @@ class ControllerNode(Node):
             robot_y = self.odom.pose.pose.position.y
             path_start_deviation = math.hypot(start_x - robot_x, start_y - robot_y)
             
-            # Reject paths with stale start positions (> 0.5m from robot)
-            if path_start_deviation > 0.5:
+            # Reject paths with stale start positions (> path_staleness_threshold from robot)
+            if path_start_deviation > self.path_staleness_threshold:
                 self.get_logger().warn(
                     f"🚫 Rejecting stale path: start deviation={path_start_deviation:.3f}m. "
                     f"Path starts at ({start_x:.3f}, {start_y:.3f}), robot at ({robot_x:.3f}, {robot_y:.3f})"
@@ -1477,8 +1486,8 @@ class ControllerNode(Node):
         # Negative angle_diff means target is to the right -> turn right (negative w = CW)
         rotate_threshold_rad = math.radians(self.rotate_in_place_angle_deg)
         
-        # FIX: For close-range goals (< 1m), use proportional control instead of rotate-then-move
-        if distance < 1.0:
+        # FIX: For close-range goals (< close_range_distance), use proportional control instead of rotate-then-move
+        if distance < self.close_range_distance:
             # Close to goal - use gentle proportional control
             v = min(self.max_linear_vel * 0.5, distance * 0.8)
             w = angle_diff * self.heading_kp * 0.7  # Gentler turning

@@ -47,6 +47,10 @@ from objectives import ObjectiveEvaluator
 from uncertainty_aware import UncertaintyAwarePlanner
 from nsga2 import fast_non_dominated_sort, crowding_distance, nsga2_selection
 
+# Path validation constants
+PATH_START_DEVIATION_THRESHOLD = 0.1  # meters - threshold for auto-correcting path start
+PATH_START_WARNING_THRESHOLD = 0.2  # meters - threshold for logging warnings
+
 
 def dominates(a, b):
     """Return True if a dominates b"""
@@ -2206,7 +2210,7 @@ class CompletePathOptimizer(Node):
             
             # Check if path start is too far from current position (staleness check)
             start_deviation = math.hypot(start_x - current_x, start_y - current_y)
-            if start_deviation > 0.1:
+            if start_deviation > PATH_START_DEVIATION_THRESHOLD:
                 if self.debug_mode:
                     self.get_logger().warn(
                         f"⚠️ Path start mismatch detected: deviation={start_deviation:.3f}m. "
@@ -2214,6 +2218,13 @@ class CompletePathOptimizer(Node):
                     )
                 # Force path to start from current position
                 path_points[0] = (current_x, current_y)
+            elif start_deviation > PATH_START_WARNING_THRESHOLD:
+                # Log warning for moderate deviations without correction
+                if self.debug_mode:
+                    self.get_logger().debug(
+                        f"Path start deviation: {start_deviation:.3f}m "
+                        f"(within tolerance, no correction needed)"
+                    )
         
         # CRITICAL FIX 2: Ensure last point is actual goal
         if self.goal_position and len(path_points) > 0:
