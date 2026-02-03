@@ -47,15 +47,17 @@
     </joint>
 
     <!-- Base link with visual mesh -->
+    <!-- NOTE: 180° yaw rotation applied to align RViz visualization with real robot orientation -->
+    <!-- Real robot moves forward correctly; this rotation ensures RViz shows the same direction -->
     <link name="mobile_robot_base_link">
       <visual>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <origin xyz="0 0 0" rpy="0 0 ${M_PI}"/>
         <geometry>
           <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/scout_mini_base_link2.dae" />
         </geometry>
       </visual>
       <collision>
-        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <origin xyz="0 0 0" rpy="0 0 ${M_PI}"/>
         <geometry>
           <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/scout_mini_base_link2.dae" />
         </geometry>
