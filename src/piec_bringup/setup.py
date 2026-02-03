@@ -28,7 +28,8 @@ setup(
     entry_points={
     'console_scripts': [
         'test_goal_publisher = piec_bringup.test_goal_publisher:main',
-        'debug_path = piec_bringup.debug_path:main',  # ADD THIS LINE
+        'debug_path = piec_bringup.debug_path:main',
+        'tf_validator = piec_bringup.tf_validator:main',
     ],
 },
 )
