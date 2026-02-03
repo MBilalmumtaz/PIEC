@@ -135,7 +135,7 @@ ros2 launch piec_bringup piec_real_robot.launch.py
 **What this includes:**
 - UKF localization (fuses odometry + IMU)
 - PIEC controller (path following with obstacle avoidance)
-- Path optimizer (GA-based trajectory planning)
+- Complete path optimizer (`complete_path_optimizer.py` - GA-based with PINN integration)
 - PINN service (physics-informed predictions)
 - Emergency stop and safety monitors
 
@@ -458,9 +458,15 @@ See `piec_real_robot.launch.py`, UKF section:
 - `R_imu_orientation`, `R_odom_position`: Measurement noise
 
 ### Path Optimizer
+The system uses `complete_path_optimizer` (file: `complete_path_optimizer.py`) which integrates PINN predictions with genetic algorithm-based trajectory planning. This is the enhanced version with full obstacle awareness and physics-informed optimization.
+
+**Note:** A simpler `path_optimizer` executable also exists but is not used by the main launch file.
+
+Parameters in `piec_real_robot.launch.py`:
 - `population_size`: GA population (default: 15)
 - `generations`: GA iterations (default: 6)
 - `optimization_timeout`: Max planning time (s)
+- `use_pinn_predictions`: Enable PINN integration (default: True)
 
 ## Contributing
 Please ensure all changes pass existing tests and add new tests for new features.

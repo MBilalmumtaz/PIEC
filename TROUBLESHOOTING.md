@@ -168,7 +168,7 @@ ros2 topic echo /cmd_vel_safe
 
 **Checklist:**
 - [ ] Goal is in correct frame (`odom` not `map`)
-- [ ] Path optimizer is running: `ros2 node list | grep path`
+- [ ] Path optimizer is running: `ros2 node list | grep pinn_path_optimizer`
 - [ ] Controller is running: `ros2 node list | grep controller`
 - [ ] UKF is publishing: `ros2 topic hz /ukf/odom`
 - [ ] No obstacles blocking path: `ros2 topic echo /scan --field ranges | head`
