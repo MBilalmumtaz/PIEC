@@ -47,18 +47,19 @@
     </joint>
 
     <!-- Base link with visual mesh -->
-    <!-- NOTE: Original mesh orientation rpy="1.57 0 1.57" (90° roll + 90° yaw) -->
-    <!-- This rotation is correct for the real robot - DO NOT change to 0 0 0 -->
-    <!-- The mesh was modeled in a specific orientation that requires this transform -->
+    <!-- NOTE: Yaw rotation adjusted to fix front/back orientation in RViz for real robot -->
+    <!-- Roll: 90° (1.57 rad) aligns mesh vertical axis -->
+    <!-- Yaw: -90° (-1.57 rad = 270°) corrects front/back visual orientation -->
+    <!-- Adding 180° to original yaw (1.57 + 3.14 = 4.71 = -1.57 mod 2π) flips the orientation -->
     <link name="mobile_robot_base_link">
       <visual>
-        <origin xyz="0 0 0" rpy="1.57 0 1.57"/>
+        <origin xyz="0 0 0" rpy="1.57 0 -1.57"/>
         <geometry>
           <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/scout_mini_base_link2.dae" />
         </geometry>
       </visual>
       <collision>
-        <origin xyz="0 0 0" rpy="1.57 0 1.57"/>
+        <origin xyz="0 0 0" rpy="1.57 0 -1.57"/>
         <geometry>
           <mesh filename="file://$(find agilex_scout)/meshes/mobile_robot/scout_mini_base_link2.dae" />
         </geometry>

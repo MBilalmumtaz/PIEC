@@ -20,25 +20,28 @@ Before reporting an issue, verify these basics:
 
 #### 1A. Robot Appears Reversed in RViz
 
-**Symptom:** Robot model faces backward or moves opposite direction in RViz compared to real robot.
+**Symptom:** Robot moves correctly, but visual model in RViz shows front as back.
 
 **Diagnosis:**
 ```bash
 # 1. Check URDF mesh orientation
 ros2 param get /robot_state_publisher robot_description | grep -A 3 "mobile_robot_base_link"
-# Should show rpy="1.57 0 1.57" (90° roll + 90° yaw) - this is CORRECT
+# Should show rpy="1.57 0 -1.57" (90° roll, -90° yaw)
 
-# 2. Test movement direction
+# 2. Test movement and orientation
 ros2 topic pub --once /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"
-# Robot should move forward in RViz (positive X direction) matching real robot
+# Robot should:
+# - Move forward in RViz (positive X direction) ✓
+# - Visual model's front should face forward ✓
 ```
 
 **Fix:**
-- Ensure using ORIGINAL URDF configuration (reverted from incorrect PR changes)
+- Ensure using correct URDF configuration
 - File: `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini.urdf.xacro`
-- Line 55 should be: `<origin xyz="0 0 0" rpy="1.57 0 1.57"/>` ✓ CORRECT
-- **NOT**: `<origin xyz="0 0 0" rpy="0 0 0"/>` ✗ WRONG (causes reversed visualization)
-- The `rpy="1.57 0 1.57"` rotation is required for the mesh to align properly
+- Line 56 should be: `<origin xyz="0 0 0" rpy="1.57 0 -1.57"/>` ✓ CORRECT
+- Roll: 90° (1.57) aligns mesh vertical axis
+- Yaw: -90° (-1.57) corrects front/back visual orientation
+- **NOT**: `rpy="1.57 0 1.57"` (shows robot backward)
 
 #### 1B. TF Tree Broken or Missing Transforms
 

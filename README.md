@@ -261,27 +261,30 @@ ros2 topic echo /odometry --field twist.twist
 
 ## Troubleshooting
 
-### Issue: Robot Moves Backward in RViz but Forward in Reality
+### Issue: Robot Visual Orientation Shows Front as Back in RViz
 
-**RESOLVED: Reverted to original working configuration.**
+**FIXED: Applied 180° yaw rotation to correct visual orientation.**
 
-The URDF mesh orientation `rpy="1.57 0 1.57"` (90° roll + 90° yaw) is the CORRECT configuration for the real Scout Mini robot. An earlier change to `rpy="0 0 0"` broke the visualization.
+The robot moves correctly, but the visual model in RViz showed the front as the back. This is corrected by adjusting the yaw rotation.
 
 **To verify the fix:**
 1. Launch `ros2 launch agilex_scout scout_robot_lidar.launch.py`
 2. Send a forward command: `ros2 topic pub /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}}"`
-3. In RViz, robot should move forward (positive X direction) matching real robot movement
+3. In RViz:
+   - Robot should move forward (positive X direction) ✓
+   - **Front of robot visual model should face forward** ✓
 
 **Current correct configuration:**
-- `scout_mini.urdf.xacro` has `rpy="1.57 0 1.57"` for base_link mesh ✓
-- This is the ORIGINAL orientation that works with the real robot
-- **DO NOT change this to** `rpy="0 0 0"` - that breaks real robot visualization
-- Wheel axes are `xyz="0 0 1"` (standard convention)
+- `scout_mini.urdf.xacro` has `rpy="1.57 0 -1.57"` for base_link mesh
+- Roll: 90° (1.57 rad) - aligns mesh vertical axis
+- Yaw: -90° (-1.57 rad = 270°) - corrects front/back orientation
+- This adds 180° to the original yaw to flip the visual model
 
 **Technical explanation:**
-- The mesh file was created with a specific orientation in the CAD software
-- The `rpy="1.57 0 1.57"` transform aligns the mesh coordinate system with ROS conventions
-- This transform was working correctly; changing it caused the visualization issues
+- The mesh requires roll=90° to align its coordinate system
+- Original yaw=90° showed the robot backward in RViz
+- Changed yaw to -90° (equivalent to adding 180°) to flip the orientation
+- Now the front of the visual model matches the actual front of the robot
 
 ### Issue: IMU Data Different Between Standalone and Launch
 

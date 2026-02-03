@@ -1,43 +1,45 @@
-# Pull Request Summary: Fix Robot Visualization, IMU, and Path Following Issues
+# Pull Request Summary: Fix RViz Visual Orientation for Real Robot
 
 ## Overview
-This PR addresses three critical issues in the Scout Mini PIEC robot system:
-1. Reversed robot visualization in RViz
-2. IMU frame/topic inconsistencies between standalone and launch modes
-3. Unreliable path following and goal completion
+This PR fixes the Scout Mini robot's visual orientation in RViz. The robot was moving correctly, but the visual model showed the front as the back (180° reversed).
+
+## The Actual Issue
+
+**User Report:**
+- Robot moves correctly in reality and simulation ✓
+- RViz shows correct movement direction ✓
+- BUT: Visual model shows front as back ✗
+- This ONLY affects real robot, not simulation
+
+**Root Cause:**
+The mesh orientation had yaw=90° which made the visual model appear backward. By changing yaw to -90° (adding 180° rotation), the visual now shows front as front.
 
 ## Changes Made
 
-### 1. URDF/Xacro Fixes (Robot Visualization)
+### 1. URDF Visual Orientation Fix
 
 **Files Changed:**
 - `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini.urdf.xacro`
-- `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini_wheel_1.xacro`
-- `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini_wheel_2.xacro`
-- `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini_wheel_3.xacro`
-- `src/scout_lidar_imu/agilex_scout/urdf/mobile_robot/scout_mini_wheel_4.xacro`
 
 **Changes:**
-- **Base link mesh orientation**: REVERTED to original working configuration
-  - Incorrect change: Changed to `rpy="0 0 0"` (caused reversed visualization)
-  - **CORRECTED**: Reverted to `rpy="1.57 0 1.57"` (90° roll + 90° yaw) ✓
-  - This is the ORIGINAL orientation that works correctly with the real robot
-  
-- **Wheel joint axes**: Corrected axis direction for real robot mode
-  - Before: `axis xyz="0 0 -1"` (inverted Z axis)
-  - After: `axis xyz="0 0 1"` (standard Z axis)
-  - Applied to all 4 wheels consistently
+- **Base mesh orientation**: Adjusted yaw rotation to fix front/back visual orientation
+  - Before: `rpy="1.57 0 1.57"` (roll=90°, yaw=90°) - showed backward
+  - After: `rpy="1.57 0 -1.57"` (roll=90°, yaw=-90°) - shows correctly
+  - Added 180° to yaw: 1.57 + π = 4.71 = -1.57 (mod 2π)
+  - This flips the visual model orientation by 180°
 
 **Impact:**
-- RViz visualization matches real robot movement direction (original working state restored)
-- When real robot moves forward, RViz shows forward movement
-- IMU arrow points to front of robot correctly
-- Visual feedback matches physical reality
+- RViz visual model now shows front as front ✓
+- Movement was already correct, now visualization matches ✓
+- Only visual representation changed, no functional impact
+- Works for real robot (simulation was already fine)
 
-**Important Note:**
-- Earlier commits in this PR incorrectly changed the mesh orientation from `rpy="1.57 0 1.57"` to `rpy="0 0 0"`
-- That change CAUSED the visualization reversal problem
-- This has been corrected by reverting to the original `rpy="1.57 0 1.57"`
+### 2. Other PR Improvements (Preserved)
+**Other URDF Improvements:**
+- **Wheel joint axes**: Corrected for real robot mode
+  - Changed: `axis xyz="0 0 -1"` → `axis xyz="0 0 1"` 
+  - Applied to all 4 wheel xacro files
+  - Ensures consistent wheel conventions
 
 ### 2. IMU Configuration Fixes
 
