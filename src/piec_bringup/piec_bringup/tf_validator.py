@@ -9,7 +9,6 @@ from rclpy.node import Node
 from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
-import time
 import math
 
 
@@ -21,6 +20,7 @@ class TFValidator(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         
         # Define required transforms to validate
+        # Can be made configurable via ROS parameters in future versions
         self.required_transforms = [
             ('odom', 'base_footprint'),
             ('base_footprint', 'base_link'),
@@ -50,10 +50,19 @@ class TFValidator(Node):
             },
         }
         
-        self.get_logger().info("TF Validator initialized - waiting 3 seconds for TF tree...")
-        time.sleep(3.0)
+        self.get_logger().info("TF Validator initialized - waiting for TF tree to populate...")
         
-        self.validate_all()
+        # Wait for TF tree to be available using a timer-based approach
+        # This is more ROS2-friendly than blocking sleep
+        self.validation_timer = self.create_timer(3.0, self.validate_all_callback)
+        self.validation_done = False
+    
+    def validate_all_callback(self):
+        """Timer callback to validate TF tree after delay"""
+        if not self.validation_done:
+            self.validate_all()
+            self.validation_done = True
+            self.validation_timer.cancel()
     
     def validate_all(self):
         """Validate all required transforms"""
@@ -175,8 +184,9 @@ def main(args=None):
     
     validator = TFValidator()
     
-    # Keep node alive briefly to finish validation
-    rclpy.spin_once(validator, timeout_sec=1.0)
+    # Spin until validation completes (timer-based, non-blocking)
+    while rclpy.ok() and not validator.validation_done:
+        rclpy.spin_once(validator, timeout_sec=0.5)
     
     validator.destroy_node()
     rclpy.shutdown()

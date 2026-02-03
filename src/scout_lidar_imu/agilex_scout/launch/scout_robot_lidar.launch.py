@@ -236,6 +236,8 @@ def generate_launch_description():
     # 9. TF TRANSFORMS
     # ------------------------------------------------------------------
     # Base to IMU transform
+    # Yaw offset of -0.94 rad (-54°) compensates for physical IMU mounting orientation
+    # This value was determined through calibration and must match the Madgwick filter yaw_offset
     base_to_imu_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
