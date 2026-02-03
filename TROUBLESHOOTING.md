@@ -693,6 +693,137 @@ If issues persist after following this guide:
 
 ---
 
+## 6. Turn Direction and Angular Sign Correction
+
+### 6A. Verifying Turn Direction
+
+**Symptom:** Robot turns the wrong direction when navigating to goals on the left, right, or behind.
+
+**Understanding the Problem:**
+
+Different robot platforms interpret `cmd_vel.angular.z` signs differently:
+- **Standard ROS Convention**: `+w` = counter-clockwise (CCW, left turn), `-w` = clockwise (CW, right turn)
+- **Scout Mini**: `+w` = clockwise (CW, right turn), `-w` = counter-clockwise (CCW, left turn) - **INVERTED**
+
+The controller computes velocities using standard ROS convention, but Scout Mini has the opposite sign convention. This is corrected using the `angular_sign_correction` parameter.
+
+**Testing Turn Direction:**
+
+```bash
+# 1. Ensure robot is in open space facing forward (positive X axis)
+# 2. Set angular_sign_correction to current value
+ros2 param get /controller angular_sign_correction
+
+# 3. Send goal to the RIGHT of robot (negative Y in odom frame)
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
+  '{header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: -2.0}}}'
+
+# Robot should turn RIGHT (clockwise)
+# Watch the cmd_vel output:
+ros2 topic echo /cmd_vel --field angular.z
+
+# 4. Send goal to the LEFT of robot (positive Y in odom frame)
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
+  '{header: {frame_id: "odom"}, pose: {position: {x: 0.0, y: 2.0}}}'
+
+# Robot should turn LEFT (counter-clockwise)
+
+# 5. Send goal BEHIND robot (negative X in odom frame)
+ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
+  '{header: {frame_id: "odom"}, pose: {position: {x: -2.0, y: 0.0}}}'
+
+# Robot should turn to face backwards (either direction)
+```
+
+**Interpreting Results:**
+
+| Goal Position | Expected Turn | If Robot Turns WRONG Direction |
+|--------------|---------------|-------------------------------|
+| Right (y < 0) | Clockwise (RIGHT) | Set `angular_sign_correction = -1.0` |
+| Left (y > 0) | Counter-clockwise (LEFT) | Set `angular_sign_correction = -1.0` |
+| Behind (x < 0) | Either direction | Check if turn is reasonable |
+
+**Diagnostic Logging:**
+
+With `debug_mode: true`, the controller logs turn direction:
+
+```
+📤 Cmd: v=0.500 m/s, w_raw=-0.300 rad/s [RIGHT (CW)] 
+→ w_corrected=0.300 rad/s [RIGHT (CW)] (sign_correction=-1.0)
+```
+
+This shows:
+- `w_raw`: Angular velocity computed by controller (standard ROS convention)
+- Turn direction before correction: `[RIGHT (CW)]` or `[LEFT (CCW)]`
+- `w_corrected`: Final angular velocity after sign correction
+- Turn direction after correction: Should match physical robot motion
+
+**Fixing Wrong Turn Direction:**
+
+1. **For Scout Mini (current configuration):**
+   ```python
+   # In piec_real_robot.launch.py, controller_node parameters:
+   "angular_sign_correction": -1.0,  # Scout Mini needs inverted sign
+   ```
+
+2. **For standard ROS robots:**
+   ```python
+   "angular_sign_correction": 1.0,  # No sign inversion
+   ```
+
+3. **Restart controller to apply changes:**
+   ```bash
+   ros2 lifecycle set /controller shutdown
+   ros2 run piec_controller controller_node
+   ```
+
+4. **Re-test all four directions:**
+   - Forward goal (x > 0): Should drive straight
+   - Right goal (y < 0): Should turn right then drive
+   - Left goal (y > 0): Should turn left then drive
+   - Behind goal (x < 0): Should turn 180° then drive
+
+**Unit Tests:**
+
+Run the angular sign correction tests to verify the logic:
+
+```bash
+cd ~/scoutmini_ws3/src/piec_controller
+python3 test/test_controller_heading.py TestAngularSignCorrection
+```
+
+All tests should pass:
+```
+test_sign_correction_negative ... ok
+test_sign_correction_positive ... ok
+test_right_side_goal_with_sign_correction ... ok
+test_left_side_goal_with_sign_correction ... ok
+```
+
+### 6B. Understanding Sign Correction in Code
+
+The sign correction is applied in `controller_node.py` at the final command publication:
+
+```python
+def publish_cmd(self, linear_vel, angular_vel):
+    # Compute angular velocity using standard ROS convention
+    # (positive = CCW/left, negative = CW/right)
+    raw_angular = angular_vel
+    
+    # Apply sign correction for platform-specific conventions
+    angular_vel = raw_angular * self.angular_scale * self.angular_sign
+    
+    # Publish corrected velocity
+    msg.angular.z = angular_vel
+```
+
+The correction happens **after** all path planning and control logic, ensuring:
+1. Controller logic uses standard ROS convention (easier to reason about)
+2. Only the final output is adjusted for the specific robot platform
+3. Diagnostics show both raw and corrected values for debugging
+
+---
+
 ## Quick Reference
 
 ### Expected Topic Rates
