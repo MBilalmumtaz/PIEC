@@ -484,7 +484,7 @@ ros2 topic pub --once /cmd_vel_piec geometry_msgs/Twist "{linear: {x: 0.0}, angu
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Goal on right → robot turns left | Wrong angular sign | Set `angular_sign_correction: -1.0` in launch file |
+| Goal on right → robot turns left | Wrong angular sign (was default) | ✓ Now fixed in launch file |
 | Robot oscillates near straight paths | Heading deadband too small | Increase `heading_deadband_deg: 3.0` |
 | Robot doesn't turn aggressively enough | Low heading gain | Increase `heading_kp: 2.0` |
 | Robot rotates too fast | High heading gain | Decrease `heading_kp: 1.0` or `max_heading_rate: 0.4` |
@@ -506,8 +506,10 @@ ros2 topic pub --once /cmd_vel_piec geometry_msgs/Twist "{linear: {x: 0.0}, angu
 # Robot-specific calibration
 "linear_scale_factor": 0.95,          # Compensate for motor response
 "angular_scale_factor": 0.99,         # Compensate for angular response
-"angular_sign_correction": 1.0,       # 1.0 or -1.0 to flip turn direction
+"angular_sign_correction": -1.0,      # Scout Mini: -1.0 (positive w → CW), standard: 1.0
 ```
+
+**Note:** As of the latest update, `piec_real_robot.launch.py` correctly defaults to `angular_sign_correction: -1.0` for Scout Mini hardware.
 
 #### 6B. Path Following in Wrong Direction
 

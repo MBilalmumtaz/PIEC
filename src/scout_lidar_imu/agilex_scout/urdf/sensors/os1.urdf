@@ -24,11 +24,13 @@
 		</inertial>
 	</link>
 
-	<!-- Fixed joint: mount IMU inside the LiDAR sensor -->
-	<joint name="os_sensor_to_imu" type="fixed">
-		<parent link="os_sensor"/>
+	<!-- Fixed joint: IMU attached to mobile_robot_base_link (not os_sensor) -->
+	<!-- Replaces static_transform_publisher from launch file to be the single authoritative source -->
+	<joint name="base_to_imu" type="fixed">
+		<parent link="mobile_robot_base_link"/>
 		<child  link="imu_link"/>
-		<origin xyz="0 0 0.02" rpy="0 0 0"/>
+		<origin xyz="0 0 0.2" rpy="0 0 -0.94"/>
+		<!-- z=0.2m height, yaw=-0.94 rad (-54°) for physical IMU mounting -->
 	</joint>
 
 	<!-- Gazebo IMU sensor plugin -->

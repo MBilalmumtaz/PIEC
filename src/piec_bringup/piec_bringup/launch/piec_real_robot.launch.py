@@ -260,7 +260,7 @@ def generate_launch_description():
             "control_frequency": 10.0,
             "linear_scale_factor": 0.95,
             "angular_scale_factor": 0.99,
-            "angular_sign_correction": 1.0,
+            "angular_sign_correction": -1.0,  # Scout Mini: positive cmd_vel.angular.z → CW rotation
             "debug_mode": True,
             "require_explicit_goal": False,  # Changed from True to False for autonomous path following
             "path_topic": "/piec/path",
@@ -383,5 +383,19 @@ def generate_launch_description():
         }],
     )
     ld.add_action(metrics_collector_node)
+    
+    # ------------------------------------------------------------------
+    # 9. TF VALIDATOR FOR REAL ROBOT
+    # ------------------------------------------------------------------
+    tf_validator_node = Node(
+        package="piec_bringup",
+        executable="tf_validator",
+        name="tf_validator",
+        output="screen",
+        parameters=[{
+            "use_sim_time": use_sim_time,
+        }],
+    )
+    ld.add_action(tf_validator_node)
     
     return ld

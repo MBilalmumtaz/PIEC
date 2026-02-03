@@ -198,10 +198,10 @@ scout_mini_params = {
 }
 ```
 
-**Controller calibration** (if angular direction is reversed):
+**Controller calibration** (Scout Mini uses inverted angular sign):
 ```python
-# In controller_node parameters:
-"angular_sign_correction": 1.0,  # Use -1.0 if rotation is inverted
+# In controller_node parameters (already set in piec_real_robot.launch.py):
+"angular_sign_correction": -1.0,  # Scout Mini: -1.0 (motors interpret positive as CW)
 ```
 
 ### Goal Completion Tuning
@@ -478,7 +478,7 @@ Motor responsiveness: 45.2%
 |--------|-------|-----------|-------|
 | `odom` | `base_footprint` | Dynamic | Published by Scout base or UKF |
 | `base_footprint` | `base_link` | Static (0, 0, 0.237m) | Height offset |
-| `base_link` | `imu_link` | Static (0, 0, 0.2m, yaw: -0.94 rad) | IMU mount |
+| `base_link` | `imu_link` | URDF (0, 0, 0.2m, yaw: -0.94 rad) | IMU mount (defined in os1.urdf) |
 | `base_link` | `rslidar` | Static (0.15, 0, 0.3m) | LiDAR mount |
 
 ## Advanced Configuration

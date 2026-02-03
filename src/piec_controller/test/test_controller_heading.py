@@ -203,6 +203,85 @@ class TestControllerHeadingLogic(unittest.TestCase):
         self.assertLess(w_right, 0.0, "Right turn should have negative w (CW)")
 
 
+class TestAngularSignCorrection(unittest.TestCase):
+    """Test angular sign correction for Scout Mini robot"""
+    
+    def test_sign_correction_positive(self):
+        """Test that positive sign correction preserves standard ROS convention"""
+        # Standard ROS: positive w = CCW, negative w = CW
+        angular_sign_correction = 1.0
+        
+        # Right turn (negative w)
+        w_computed = -0.5
+        w_final = w_computed * angular_sign_correction
+        self.assertEqual(w_final, -0.5, "Positive sign correction should preserve sign")
+        
+        # Left turn (positive w)
+        w_computed = 0.5
+        w_final = w_computed * angular_sign_correction
+        self.assertEqual(w_final, 0.5, "Positive sign correction should preserve sign")
+    
+    def test_sign_correction_negative(self):
+        """Test that negative sign correction inverts angular velocity"""
+        # Scout Mini: positive cmd_vel.angular.z causes CW rotation
+        # So we need to invert the sign
+        angular_sign_correction = -1.0
+        
+        # Controller computes negative w for right turn (CW)
+        # But robot interprets positive w as CW, so we flip it
+        w_computed = -0.5  # Controller wants CW (right)
+        w_final = w_computed * angular_sign_correction
+        self.assertEqual(w_final, 0.5, "Negative correction should flip to positive for CW")
+        
+        # Controller computes positive w for left turn (CCW)
+        # But robot interprets negative w as CCW, so we flip it
+        w_computed = 0.5  # Controller wants CCW (left)
+        w_final = w_computed * angular_sign_correction
+        self.assertEqual(w_final, -0.5, "Negative correction should flip to negative for CCW")
+    
+    def test_right_side_goal_with_sign_correction(self):
+        """Test complete flow for right-side goal with sign correction"""
+        # Robot at origin facing forward
+        current_yaw = 0.0
+        target_bearing = -math.pi/2  # Goal to the right
+        
+        # Compute angle error
+        angle_diff = target_bearing - current_yaw
+        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+        self.assertAlmostEqual(angle_diff, -math.pi/2, places=5)
+        
+        # Compute angular velocity (standard ROS convention)
+        heading_kp = 1.5
+        w_computed = angle_diff * heading_kp
+        self.assertLess(w_computed, 0.0, "Standard computation gives negative w for right turn")
+        
+        # Apply Scout Mini sign correction
+        angular_sign_correction = -1.0
+        w_final = w_computed * angular_sign_correction
+        self.assertGreater(w_final, 0.0, "After correction, w is positive for Scout Mini right turn")
+    
+    def test_left_side_goal_with_sign_correction(self):
+        """Test complete flow for left-side goal with sign correction"""
+        # Robot at origin facing forward
+        current_yaw = 0.0
+        target_bearing = math.pi/2  # Goal to the left
+        
+        # Compute angle error
+        angle_diff = target_bearing - current_yaw
+        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+        self.assertAlmostEqual(angle_diff, math.pi/2, places=5)
+        
+        # Compute angular velocity (standard ROS convention)
+        heading_kp = 1.5
+        w_computed = angle_diff * heading_kp
+        self.assertGreater(w_computed, 0.0, "Standard computation gives positive w for left turn")
+        
+        # Apply Scout Mini sign correction
+        angular_sign_correction = -1.0
+        w_final = w_computed * angular_sign_correction
+        self.assertLess(w_final, 0.0, "After correction, w is negative for Scout Mini left turn")
+
+
 class TestGoalCompletionLogic(unittest.TestCase):
     """Test the improved goal completion logic"""
     
