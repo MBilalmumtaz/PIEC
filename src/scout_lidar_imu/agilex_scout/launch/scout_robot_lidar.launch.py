@@ -235,18 +235,8 @@ def generate_launch_description():
     # ------------------------------------------------------------------
     # 9. TF TRANSFORMS
     # ------------------------------------------------------------------
-    # Base to IMU transform
-    # Yaw offset of -0.94 rad (-54°) compensates for physical IMU mounting orientation
-    # This value was determined through calibration and must match the Madgwick filter yaw_offset
-    base_to_imu_tf = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='base_to_imu_tf',
-        arguments=['0', '0', '0.2', '0', '0', '-0.94', 'base_link', 'imu_link'],
-        parameters=[{'use_sim_time': use_sim_time}],
-        condition=IfCondition(use_imu)
-    )
-    ld.add_action(base_to_imu_tf)
+    # NOTE: imu_link is now defined in URDF (os1.urdf) to avoid TF conflicts
+    # The URDF attaches imu_link to base_link with correct offset and yaw
     
     # Base to LiDAR transform
     base_to_lidar_tf = Node(
