@@ -250,7 +250,7 @@ class TestAngularSignCorrection(unittest.TestCase):
         self.assertEqual(w_final, -0.5, "Negative correction should flip to negative for CCW")
 
 
-class TestControlTracking(unittest.TestCase):
+class TestCommandTracking(unittest.TestCase):
     """Test control bookkeeping updates."""
 
     def test_last_cmd_tracking(self):
@@ -267,9 +267,6 @@ class TestControlTracking(unittest.TestCase):
         controller.min_linear_vel = 0.05
         controller.debug_mode = False
         controller.control_counter = 0
-        controller.linear_history = []
-        controller.angular_history = []
-        controller.commanded_velocity_history = []
         controller.last_commanded_linear = 0.0
         controller.cmd_pub = MagicMock()
         controller.linear_history = MagicMock()
