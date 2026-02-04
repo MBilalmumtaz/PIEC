@@ -25,3 +25,4 @@ Thumbs.db
 # Backup files - match files with " (copy)" in name
 * (copy).py
 * (copy)
+test_turning_fixes.py
