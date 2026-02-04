@@ -248,35 +248,6 @@ class TestAngularSignCorrection(unittest.TestCase):
         w_computed = 0.5  # Controller wants CCW (left)
         w_final = w_computed * angular_sign_correction
         self.assertEqual(w_final, -0.5, "Negative correction should flip to negative for CCW")
-
-
-class TestCommandTracking(unittest.TestCase):
-    """Test control bookkeeping updates."""
-
-    def test_last_cmd_tracking(self):
-        """Ensure last_cmd stores raw values in publish_cmd."""
-        from piec_controller.controller_node import ControllerNode
-
-        controller = ControllerNode.__new__(ControllerNode)
-        controller.last_cmd = (0.0, 0.0)
-        controller.linear_scale = 1.0
-        controller.angular_scale = 1.0
-        controller.angular_sign = 1.0
-        controller.max_linear_vel = 1.0
-        controller.max_angular_vel = 1.0
-        controller.min_linear_vel = 0.05
-        controller.debug_mode = False
-        controller.control_counter = 0
-        controller.last_commanded_linear = 0.0
-        controller.cmd_pub = MagicMock()
-        controller.linear_history = MagicMock()
-        controller.angular_history = MagicMock()
-        controller.commanded_velocity_history = MagicMock()
-        controller.get_logger = MagicMock(return_value=MagicMock())
-
-        controller.publish_cmd(0.4, -0.2)
-
-        self.assertEqual(controller.last_cmd, (0.4, -0.2))
     
     def test_right_side_goal_with_sign_correction(self):
         """Test complete flow for right-side goal with standard ROS convention"""
@@ -319,6 +290,36 @@ class TestCommandTracking(unittest.TestCase):
         angular_sign_correction = 1.0
         w_final = w_computed * angular_sign_correction
         self.assertGreater(w_final, 0.0, "With standard ROS convention, w remains positive for left turn")
+
+
+class TestCommandTrackingUpdates(unittest.TestCase):
+    """Test control bookkeeping updates."""
+
+    def test_last_cmd_tracking(self):
+        """Ensure last_cmd stores raw values in publish_cmd."""
+        from piec_controller.controller_node import ControllerNode
+
+        controller = ControllerNode.__new__(ControllerNode)
+        controller.last_cmd = (0.0, 0.0)
+        controller.linear_scale = 1.0
+        controller.angular_scale = 1.0
+        controller.angular_sign = 1.0
+        controller.max_linear_vel = 1.0
+        controller.max_angular_vel = 1.0
+        controller.min_linear_vel = 0.05
+        controller.debug_mode = False
+        controller.control_counter = 0
+        controller.last_commanded_linear = 0.0
+        controller.cmd_pub = MagicMock()
+        controller.linear_history = MagicMock()
+        controller.angular_history = MagicMock()
+        controller.commanded_velocity_history = MagicMock()
+        controller.get_logger = MagicMock(return_value=MagicMock())
+
+        controller.publish_cmd(0.4, -0.2)
+
+        self.assertEqual(controller.last_cmd, (0.4, -0.2))
+    
 
 
 class TestGoalCompletionLogic(unittest.TestCase):
