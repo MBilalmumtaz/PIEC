@@ -260,7 +260,7 @@ def generate_launch_description():
             "control_frequency": 10.0,
             "linear_scale_factor": 0.95,
             "angular_scale_factor": 0.99,
-            "angular_sign_correction": -1.0,  # Scout Mini: positive cmd_vel.angular.z → CW rotation
+            "angular_sign_correction": 1.0,  # Standard ROS convention: +w = CCW (left), -w = CW (right)
             "debug_mode": True,
             "require_explicit_goal": False,  # Changed from True to False for autonomous path following
             "path_topic": "/piec/path",
