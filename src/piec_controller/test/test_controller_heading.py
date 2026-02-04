@@ -11,11 +11,6 @@ import sys
 import os
 from types import SimpleNamespace
 
-# Simple clip function to avoid numpy dependency
-def clip(value, min_val, max_val):
-    """Clip value to range"""
-    return max(min_val, min(max_val, value))
-
 
 # Mock rclpy before importing controller
 sys.modules['rclpy'] = MagicMock()
@@ -30,13 +25,15 @@ sys.modules['sensor_msgs.msg'] = MagicMock()
 sys.modules['ament_index_python'] = MagicMock()
 sys.modules['ament_index_python.packages'] = MagicMock()
 sys.modules['numpy'] = SimpleNamespace(
-    clip=clip,
+    clip=lambda value, min_val, max_val: max(min_val, min(max_val, value)),
     mean=lambda values: 0.0 if not values else sum(values) / len(values),
 )
 sys.modules['piec_pinn_surrogate_msgs'] = MagicMock()
 sys.modules['piec_pinn_surrogate_msgs.srv'] = MagicMock()
 sys.modules['piec_controller.dynamic_dwa_complete'] = MagicMock()
 sys.modules['rclpy.duration'] = MagicMock()
+
+import numpy as np
 
 
 class MockPose:
@@ -191,7 +188,7 @@ class TestControllerHeadingLogic(unittest.TestCase):
         self.assertGreater(abs(w), max_heading_rate)
         
         # Apply cap
-        w_capped = clip(w, -max_heading_rate, max_heading_rate)
+        w_capped = np.clip(w, -max_heading_rate, max_heading_rate)
         
         # Should be within limits
         self.assertLessEqual(abs(w_capped), max_heading_rate)
