@@ -303,7 +303,7 @@ class ControllerNode(Node):
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
             'rotate_in_place_angle_deg': 90.0,  # Rotate in place if angle error > this (degrees) - INCREASED from 45° to reduce oscillation
             'rotation_timeout': 10.0,  # Maximum time to spend rotating in place (seconds)
-            'close_range_distance': 1.0,  # Distance threshold for close-range proportional control (meters)
+            'close_range_distance': 0.3,  # Distance threshold for close-range proportional control (meters) - REDUCED from 1.0 to 0.3 to fix premature mode switching
             
             # Path validation parameters
             'path_staleness_threshold': 0.5,  # Maximum allowed deviation between path start and robot position (meters)
@@ -1490,10 +1490,10 @@ class ControllerNode(Node):
         
         # FIX: For close-range goals (< close_range_distance), use proportional control instead of rotate-then-move
         if distance < self.close_range_distance:
-            # Close to goal - use gentle proportional control
-            v = min(self.max_linear_vel * 0.5, distance * 0.8)
-            w = angle_diff * self.heading_kp * 0.7  # Gentler turning
-            w = np.clip(w, -self.max_heading_rate * 0.6, self.max_heading_rate * 0.6)
+            # Close to goal - use gentle proportional control with FULL angular control
+            v = min(self.max_linear_vel * 0.4, distance * 0.5)  # Slower linear
+            w = angle_diff * self.heading_kp  # FULL angular control, no reduction
+            w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
             
             # Reset rotation timeout when moving forward
             if abs(v) > 0.05:
@@ -1840,9 +1840,9 @@ class ControllerNode(Node):
         angular_vel = np.clip(angular_vel, -self.max_angular_vel, self.max_angular_vel)
         
         # REAL ROBOT FIX: Minimum thresholds - apply deadband for very small velocities
-        if abs(linear_vel) < 0.05:
+        if abs(linear_vel) < 0.03:  # Reduced from 0.05
             linear_vel = 0.0
-        if abs(angular_vel) < 0.05:
+        if abs(angular_vel) < 0.01:  # CRITICAL: Reduced from 0.05 to 0.01 to allow turning
             angular_vel = 0.0
         
         # Track velocity history for oscillation detection

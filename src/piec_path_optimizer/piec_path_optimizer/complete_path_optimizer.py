@@ -559,12 +559,22 @@ class CompletePathOptimizer(Node):
         """Determine if we should use a simple straight path - REAL ROBOT FIX"""
         distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
         
-        # REAL ROBOT: For short distances (< 3m), always use straight path
-        if distance_to_goal < 3.0:
+        # IMPORTANT: Check if goal requires significant turning
+        if self.robot_pose is not None:
+            robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+            goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+            angle_diff = abs(math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw)))
+            
+            # If goal is more than 30 degrees off, DON'T use simple straight path
+            if angle_diff > math.radians(30):
+                return False
+        
+        # Only use straight path for very short distances AND clear path
+        if distance_to_goal < 1.0:
             return True
         
-        # Check if straight path is clear for at least 2 meters
-        if self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, check_distance=2.0):
+        # For medium distances, check if path is clear
+        if distance_to_goal < 3.0 and self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, check_distance=2.0):
             return True
         
         return False
@@ -1350,6 +1360,39 @@ class CompletePathOptimizer(Node):
         
         return path
     
+    def generate_curved_path_for_turning(self, start_x, start_y, goal_x, goal_y):
+        """Generate a path with intermediate waypoints for goals requiring turning"""
+        path = []
+        path.append((start_x, start_y))
+        
+        # Get robot orientation
+        if self.robot_pose is not None:
+            robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+        else:
+            robot_yaw = 0.0
+        
+        goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+        distance = math.hypot(goal_x - start_x, goal_y - start_y)
+        
+        # Add intermediate waypoints along a curve
+        num_waypoints = max(3, int(distance / 0.5))  # One waypoint every 0.5m
+        
+        for i in range(1, num_waypoints):
+            t = i / num_waypoints
+            
+            # Interpolate angle from robot_yaw to goal_angle
+            angle_diff = math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw))
+            current_angle = robot_yaw + t * angle_diff
+            current_distance = t * distance
+            
+            wp_x = start_x + current_distance * math.cos(current_angle)
+            wp_y = start_y + current_distance * math.sin(current_angle)
+            
+            path.append((wp_x, wp_y))
+        
+        path.append((goal_x, goal_y))
+        return path
+    
     def run_enhanced_optimization(self):
         """Main optimization - WITH ALL FEATURES - FIXED PINN STATS"""
         try:
@@ -1379,6 +1422,21 @@ class CompletePathOptimizer(Node):
                 self.publish_path(straight_path)
                 self.optimization_active = False
                 return
+            
+            # NEW: Check if goal requires significant turning - use curved path
+            if self.robot_pose is not None:
+                robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+                goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+                angle_diff = abs(math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw)))
+                
+                # If goal requires turning > 30 degrees, use curved path
+                if angle_diff > math.radians(30):
+                    if self.debug_mode:
+                        self.get_logger().info(f"🔄 Using curved path for turning (angle={math.degrees(angle_diff):.1f}°)")
+                    curved_path = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
+                    self.publish_path(curved_path)
+                    self.optimization_active = False
+                    return
             
             # Get current PINN stats before optimization
             pinn_stats_before = self.objective_evaluator.pinn_usage
