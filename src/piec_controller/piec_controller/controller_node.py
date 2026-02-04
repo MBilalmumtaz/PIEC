@@ -203,7 +203,7 @@ class ControllerNode(Node):
         # Subscribers
         self.create_subscription(Path, '/piec/path', self.path_callback, 10)
         self.create_subscription(Odometry, '/ukf/odom', self.odom_callback, 10)
-        self.create_subscription(LaserScan, '/scan_fixed', self.scan_callback, scan_qos)
+        self.create_subscription(LaserScan, self.scan_topic, self.scan_callback, scan_qos)
         self.create_subscription(PoseStamped, '/goal_pose', self.goal_callback, 10)
 
         # Publishers
@@ -325,6 +325,7 @@ class ControllerNode(Node):
             'free_space_update_rate': 3.0,  # Hz
             'prefer_free_space_turns': True,
             'use_pinn_in_controller': True,
+            'scan_topic': '/scan_fixed',
         }
 
         # Load from YAML if file exists
@@ -398,6 +399,7 @@ class ControllerNode(Node):
         self.free_space_min_clearance = float(self.get_parameter('free_space_min_clearance').value)
         self.free_space_update_rate = float(self.get_parameter('free_space_update_rate').value)
         self.prefer_free_space_turns = self.get_parameter('prefer_free_space_turns').value
+        self.scan_topic = self.get_parameter('scan_topic').value
 
     def update_free_space_directions(self):
         """Update available free space directions"""
@@ -1900,6 +1902,7 @@ class ControllerNode(Node):
                 )
         
         self.cmd_pub.publish(msg)
+        self.last_cmd = (raw_linear, raw_angular)
 
     def quat_to_yaw(self, q):
         """Convert quaternion to yaw angle"""
