@@ -523,14 +523,15 @@ class DynamicDWAComplete:
             if rotation_duration > self.max_rotation_time:
                 # Timeout exceeded - force forward motion with turning to break deadlock
                 # This prevents infinite spinning when goals are to the side/back
+                # Robot moves forward while turning, which should reduce angle error over time
                 v = min(0.2, distance * 0.3)  # Slow forward motion
                 w = np.clip(angle_diff * 0.5, -self.max_w * 0.4, self.max_w * 0.4)
                 if hasattr(self.node, 'debug_mode') and self.node.debug_mode:
                     self.node.get_logger().warn(
                         f"⚠️ Fallback rotation timeout ({rotation_duration:.1f}s) - forcing forward motion"
                     )
-                # Reset timer after timeout action
-                self.fallback_rotation_start_time = current_time
+                # Keep timer running (don't reset) so we continue forward motion
+                # Timer will reset when angle_diff drops below threshold
             else:
                 # Turn in place for large errors (normal behavior)
                 v = 0.0
