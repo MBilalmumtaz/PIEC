@@ -76,6 +76,9 @@ class CompletePathOptimizer(Node):
         self.optimization_active = False
         self.optimization_count = 0
         self.last_optimization_time = 0.0
+        # Path update throttling - BUG FIX to prevent frequent regeneration
+        self.last_path_position = None  # Track last position when path was generated
+        self.path_update_distance_threshold = 0.3  # Only regenerate if moved > 30cm
         # ADD THESE ATTRIBUTES (PINN tracking):
         self.pinn_call_count = 0
         self.pinn_timeout_count = 0
@@ -567,23 +570,24 @@ class CompletePathOptimizer(Node):
         return angle_diff > math.radians(threshold_degrees)
     
     def should_use_simple_straight_path(self, start_x, start_y, goal_x, goal_y):
-        """Determine if we should use a simple straight path - REAL ROBOT FIX"""
-        distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
+        """Determine if we should use a simple straight path - ALWAYS TRUE (curved paths are broken)"""
+        # BUG FIX: Always use straight paths - curved path generation goes in wrong direction
+        return True
+    
+    def should_update_path(self, start_x, start_y):
+        """Check if path should be updated based on robot movement - BUG FIX for frequent regeneration"""
+        if self.last_path_position is not None:
+            dist_moved = math.hypot(
+                start_x - self.last_path_position[0],
+                start_y - self.last_path_position[1]
+            )
+            if dist_moved < self.path_update_distance_threshold:
+                # Robot hasn't moved enough, don't regenerate path
+                return False
         
-        # IMPORTANT: Check if goal requires significant turning
-        # If goal is more than 30 degrees off, DON'T use simple straight path
-        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=30):
-            return False
-        
-        # Only use straight path for very short distances AND clear path
-        if distance_to_goal < 1.0:
-            return True
-        
-        # For medium distances, check if path is clear
-        if distance_to_goal < 3.0 and self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, check_distance=2.0):
-            return True
-        
-        return False
+        # Update last path position
+        self.last_path_position = (start_x, start_y)
+        return True
 
     def check_progress(self):
         """Check if robot is making progress toward goal - ACCOUNT FOR SPEED"""
@@ -1143,6 +1147,10 @@ class CompletePathOptimizer(Node):
             goal_x = self.goal_pose.pose.position.x
             goal_y = self.goal_pose.pose.position.y
             
+            # BUG FIX: Throttle path updates - only regenerate if robot moved significantly
+            if not self.should_update_path(start_x, start_y):
+                return
+            
             distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
             if distance_to_goal < self.goal_completion_distance:
                 self.get_logger().info(f"🎯 Already at goal ({distance_to_goal:.2f}m)")
@@ -1153,7 +1161,8 @@ class CompletePathOptimizer(Node):
             if self.should_use_simple_straight_path(start_x, start_y, goal_x, goal_y):
                 if self.debug_mode:
                     self.get_logger().info("📏 Using simple straight path (clear path detected)")
-                straight_path = [(start_x, start_y), (goal_x, goal_y)]
+                # BUG FIX: Use straight path with intermediate waypoints
+                straight_path = self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
                 self.publish_path(straight_path)
                 self.optimization_active = False
                 return
@@ -1366,6 +1375,26 @@ class CompletePathOptimizer(Node):
         
         return path
     
+    def generate_straight_path_with_waypoints(self, start_x, start_y, goal_x, goal_y):
+        """Generate straight-line path with intermediate waypoints - BUG FIX for curved paths"""
+        distance = math.hypot(goal_x - start_x, goal_y - start_y)
+        
+        # Handle case where start and goal are identical
+        if distance < 0.01:  # Less than 1cm - essentially the same position
+            return [(start_x, start_y)]
+        
+        # One waypoint every 0.5m, minimum of 2, maximum of 20 to prevent excessive waypoints
+        num_waypoints = min(max(2, int(distance / 0.5)), 20)
+        
+        path = []
+        for i in range(num_waypoints):
+            t = i / (num_waypoints - 1)
+            x = start_x + t * (goal_x - start_x)
+            y = start_y + t * (goal_y - start_y)
+            path.append((x, y))
+        
+        return path
+    
     def generate_curved_path_for_turning(self, start_x, start_y, goal_x, goal_y):
         """Generate a path with intermediate waypoints for goals requiring turning"""
         path = []
@@ -1416,6 +1445,10 @@ class CompletePathOptimizer(Node):
             goal_x = self.goal_pose.pose.position.x
             goal_y = self.goal_pose.pose.position.y
             
+            # BUG FIX: Throttle path updates - only regenerate if robot moved significantly
+            if not self.should_update_path(start_x, start_y):
+                return
+            
             distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
             if distance_to_goal < self.goal_completion_distance:
                 self.get_logger().info(f"🎯 Already at goal ({distance_to_goal:.2f}m)")
@@ -1426,7 +1459,8 @@ class CompletePathOptimizer(Node):
             if self.should_use_simple_straight_path(start_x, start_y, goal_x, goal_y):
                 if self.debug_mode:
                     self.get_logger().info("📏 Using simple straight path (clear path detected)")
-                straight_path = [(start_x, start_y), (goal_x, goal_y)]
+                # BUG FIX: Use straight path with intermediate waypoints
+                straight_path = self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
                 self.publish_path(straight_path)
                 self.optimization_active = False
                 return

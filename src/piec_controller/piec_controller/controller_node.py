@@ -151,6 +151,7 @@ class ControllerNode(Node):
         
         # Rotation timeout tracking to prevent infinite spinning
         self.rotation_start_time = None
+        self.is_rotating_in_place = False  # Flag to track when rotating in place
         self.free_space_escape_preferred = True
         
         # Oscillation detection - NEW
@@ -1368,61 +1369,68 @@ class ControllerNode(Node):
         if not self.goal_reached:
             v, w = self.calculate_simple_control(target_waypoint, x, y, yaw)
             
-            # If turning sharply, check if there's better free space direction
-            if abs(w) > 0.3 and self.prefer_free_space_turns and self.free_space_directions:
-                current_turn_dir = w > 0
-                alternative_found = False
-                
-                for angle, clearance, score in self.free_space_directions[:3]:
-                    angle_diff = angle - yaw
-                    angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+            # BUG FIX: Skip all velocity modifications when rotating in place
+            if not self.is_rotating_in_place:
+                # If turning sharply, check if there's better free space direction
+                if abs(w) > 0.3 and self.prefer_free_space_turns and self.free_space_directions:
+                    current_turn_dir = w > 0
+                    alternative_found = False
                     
-                    if (clearance > self.obstacle_distance * 1.5 and 
-                        abs(angle_diff) < math.radians(60)):
+                    for angle, clearance, score in self.free_space_directions[:3]:
+                        angle_diff = angle - yaw
+                        angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
                         
-                        w_adjust = angle_diff * 1.2
-                        w_adjust = np.clip(w_adjust, -self.max_angular_vel, self.max_angular_vel)
-                        
-                        if self.debug_mode and abs(w_adjust - w) > 0.2:
-                            self.get_logger().debug(f"Adjusting turn toward free space: {math.degrees(angle):.1f}°")
-                        
-                        w = w_adjust
-                        alternative_found = True
-                        break
-            
-            # Apply enhanced speed limits
-            v = self.apply_enhanced_speed_limit(v, w)
-            v = self.adjust_speed_for_curvature(v, w)
-
-            # Apply motion limits
-            v, w = self.apply_motion_limits(v, w)
-
-            # Apply minimum velocity threshold
-            if v > 0 and v < self.min_linear_vel:
-                v = self.min_linear_vel
-            
-            # CRITICAL: Only apply PINN if NOT on a straight path
-            is_straight_path = False
-            if self.path and len(self.path.poses) >= 2:
-                goal_pose = self.path.poses[-1].pose.position
-                start_pose = self.path.poses[0].pose.position
-                path_dx = goal_pose.x - start_pose.x
-                path_dy = goal_pose.y - start_pose.y
+                        if (clearance > self.obstacle_distance * 1.5 and 
+                            abs(angle_diff) < math.radians(60)):
+                            
+                            w_adjust = angle_diff * 1.2
+                            w_adjust = np.clip(w_adjust, -self.max_angular_vel, self.max_angular_vel)
+                            
+                            if self.debug_mode and abs(w_adjust - w) > 0.2:
+                                self.get_logger().debug(f"Adjusting turn toward free space: {math.degrees(angle):.1f}°")
+                            
+                            w = w_adjust
+                            alternative_found = True
+                            break
                 
-                # Check if path is straight
-                if abs(path_dx) > 0.2 and abs(path_dy) / abs(path_dx) < 0.03:
-                    is_straight_path = True
-            
-            # Apply PINN optimization ONLY if not straight
-            if self.pinn_client is not None and not is_straight_path:
-                v, w = self.optimize_speed_with_pinn(v, w, distance_to_goal)
+                # Apply enhanced speed limits
+                v = self.apply_enhanced_speed_limit(v, w)
+                v = self.adjust_speed_for_curvature(v, w)
+
+                # Apply motion limits
+                v, w = self.apply_motion_limits(v, w)
+
+                # Apply minimum velocity threshold
+                if v > 0 and v < self.min_linear_vel:
+                    v = self.min_linear_vel
+                
+                # CRITICAL: Only apply PINN if NOT on a straight path
+                is_straight_path = False
+                if self.path and len(self.path.poses) >= 2:
+                    goal_pose = self.path.poses[-1].pose.position
+                    start_pose = self.path.poses[0].pose.position
+                    path_dx = goal_pose.x - start_pose.x
+                    path_dy = goal_pose.y - start_pose.y
+                    
+                    # Check if path is straight
+                    if abs(path_dx) > 0.2 and abs(path_dy) / abs(path_dx) < 0.03:
+                        is_straight_path = True
+                
+                # Apply PINN optimization ONLY if not straight
+                if self.pinn_client is not None and not is_straight_path:
+                    v, w = self.optimize_speed_with_pinn(v, w, distance_to_goal)
+                    if self.debug_mode and self.control_counter % 50 == 0:
+                        self.get_logger().info(f"📐 Simple Control with PINN: v={v:.3f}, w={w:.3f}")
+                elif is_straight_path:
+                    # Force w=0 for straight paths
+                    w = 0.0
+                    if self.debug_mode and self.control_counter % 50 == 0:
+                        self.get_logger().info(f"📐 Simple Control (straight, NO PINN): v={v:.3f}, w=0.000")
+            else:
+                # When rotating in place, only apply angular limits to w, keep v=0
+                w = np.clip(w, -self.max_angular_vel, self.max_angular_vel)
                 if self.debug_mode and self.control_counter % 50 == 0:
-                    self.get_logger().info(f"📐 Simple Control with PINN: v={v:.3f}, w={w:.3f}")
-            elif is_straight_path:
-                # Force w=0 for straight paths
-                w = 0.0
-                if self.debug_mode and self.control_counter % 50 == 0:
-                    self.get_logger().info(f"📐 Simple Control (straight, NO PINN): v={v:.3f}, w=0.000")
+                    self.get_logger().info(f"🔄 Rotating in place (no mods): v={v:.3f}, w={w:.3f}")
 
             self.update_statistics(v)
             self.publish_cmd(float(v), float(w))
@@ -1460,6 +1468,7 @@ class ControllerNode(Node):
                         f"🎯 PATH is straight: dx={path_dx:.3f}, dy={path_dy:.3f}, "
                         f"ratio={abs(path_dy)/abs(path_dx):.4f} - FORCING w=0"
                     )
+                self.is_rotating_in_place = False  # Not rotating
                 return v, w
         
         # SECOND CHECK: Robot-to-target straightness
@@ -1470,6 +1479,7 @@ class ControllerNode(Node):
                 self.get_logger().info(
                     f"🎯 Robot-to-target straight: dx={dx:.3f}, dy={dy:.3f} - w=0"
                 )
+            self.is_rotating_in_place = False  # Not rotating
             return v, w
         
         # THIRD CHECK: Small angle error using deadband parameter
@@ -1481,6 +1491,7 @@ class ControllerNode(Node):
                 self.get_logger().info(
                     f"📐 Angle error within deadband ({math.degrees(angle_diff):.2f}°) - w=0"
                 )
+            self.is_rotating_in_place = False  # Not rotating
             return v, w
         
         # Calculate angular velocity using heading_kp parameter
@@ -1504,6 +1515,7 @@ class ControllerNode(Node):
                 self.get_logger().info(
                     f"🎯 Close-range proportional: dist={distance:.2f}m, angle={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
+            self.is_rotating_in_place = False  # Not rotating in place
         elif abs(angle_diff) > rotate_threshold_rad:
             # Large angle error - rotate in place before driving
             # Check rotation timeout to prevent infinite spinning
@@ -1522,15 +1534,18 @@ class ControllerNode(Node):
                 w = angle_diff * self.heading_kp * 0.5
                 w = np.clip(w, -self.max_heading_rate * 0.5, self.max_heading_rate * 0.5)
                 self.rotation_start_time = None  # Reset timeout
+                self.is_rotating_in_place = False  # Not rotating in place
             else:
+                # BUG FIX: Explicitly set v=0.0 when rotating in place
                 v = 0.0
-                w = angle_diff * self.heading_kp
-                # Cap to max_heading_rate
-                w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
+                # Use full angular velocity - angle_diff should never be zero here
+                # since we're in rotate-in-place mode (abs(angle_diff) > rotate_threshold_rad)
+                w = np.sign(angle_diff) * self.max_heading_rate
                 if self.debug_mode:
                     self.get_logger().info(
                         f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}, duration={rotation_duration:.1f}s"
                     )
+                self.is_rotating_in_place = True  # Flag for rotate-in-place mode
         else:
             # Reset rotation timeout when not rotating in place
             self.rotation_start_time = None
@@ -1560,6 +1575,7 @@ class ControllerNode(Node):
                 self.get_logger().info(
                     f"🚗 Forward+turn: angle_error={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
+            self.is_rotating_in_place = False  # Not rotating in place
         
         # Return raw velocities - scaling and sign correction applied in publish_cmd()
         return v, w
@@ -1780,7 +1796,9 @@ class ControllerNode(Node):
         
         turning_factor = 1.0 - (abs(angular_velocity) / self.max_angular_vel) * 0.4
         adjusted_speed = base_speed * turning_factor
-        adjusted_speed = max(adjusted_speed, self.min_linear_vel)
+        # BUG FIX: Don't enforce min_linear_vel when rotating in place (base_speed=0)
+        if base_speed > 0.0:
+            adjusted_speed = max(adjusted_speed, self.min_linear_vel)
         return adjusted_speed
 
     def apply_motion_limits(self, v, w):
