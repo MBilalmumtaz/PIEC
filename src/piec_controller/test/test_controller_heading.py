@@ -26,7 +26,7 @@ sys.modules['ament_index_python'] = MagicMock()
 sys.modules['ament_index_python.packages'] = MagicMock()
 sys.modules['numpy'] = SimpleNamespace(
     clip=lambda value, min_val, max_val: max(min_val, min(max_val, value)),
-    mean=lambda values: sum(values) / len(values),
+    mean=lambda values: sum(values) / len(values) if values else 0.0,
 )
 sys.modules['piec_pinn_surrogate_msgs'] = MagicMock()
 sys.modules['piec_pinn_surrogate_msgs.srv'] = MagicMock()
