@@ -9,6 +9,13 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 import os
+from types import SimpleNamespace
+
+# Simple clip function to avoid numpy dependency
+def clip(value, min_val, max_val):
+    """Clip value to range"""
+    return max(min_val, min(max_val, value))
+
 
 # Mock rclpy before importing controller
 sys.modules['rclpy'] = MagicMock()
@@ -22,11 +29,14 @@ sys.modules['sensor_msgs'] = MagicMock()
 sys.modules['sensor_msgs.msg'] = MagicMock()
 sys.modules['ament_index_python'] = MagicMock()
 sys.modules['ament_index_python.packages'] = MagicMock()
-
-# Simple clip function to avoid numpy dependency
-def clip(value, min_val, max_val):
-    """Clip value to range"""
-    return max(min_val, min(max_val, value))
+sys.modules['numpy'] = SimpleNamespace(
+    clip=clip,
+    mean=lambda values: sum(values) / len(values) if values else 0.0,
+)
+sys.modules['piec_pinn_surrogate_msgs'] = MagicMock()
+sys.modules['piec_pinn_surrogate_msgs.srv'] = MagicMock()
+sys.modules['piec_controller.dynamic_dwa_complete'] = MagicMock()
+sys.modules['rclpy.duration'] = MagicMock()
 
 
 class MockPose:
@@ -238,6 +248,38 @@ class TestAngularSignCorrection(unittest.TestCase):
         w_computed = 0.5  # Controller wants CCW (left)
         w_final = w_computed * angular_sign_correction
         self.assertEqual(w_final, -0.5, "Negative correction should flip to negative for CCW")
+
+
+class TestControlTracking(unittest.TestCase):
+    """Test control bookkeeping updates."""
+
+    def test_last_cmd_tracking(self):
+        """Ensure last_cmd stores raw values in publish_cmd."""
+        from piec_controller.controller_node import ControllerNode
+
+        controller = ControllerNode.__new__(ControllerNode)
+        controller.last_cmd = (0.0, 0.0)
+        controller.linear_scale = 1.0
+        controller.angular_scale = 1.0
+        controller.angular_sign = 1.0
+        controller.max_linear_vel = 1.0
+        controller.max_angular_vel = 1.0
+        controller.min_linear_vel = 0.05
+        controller.debug_mode = False
+        controller.control_counter = 0
+        controller.linear_history = []
+        controller.angular_history = []
+        controller.commanded_velocity_history = []
+        controller.last_commanded_linear = 0.0
+        controller.cmd_pub = MagicMock()
+        controller.linear_history = MagicMock()
+        controller.angular_history = MagicMock()
+        controller.commanded_velocity_history = MagicMock()
+        controller.get_logger = MagicMock(return_value=MagicMock())
+
+        controller.publish_cmd(0.4, -0.2)
+
+        self.assertEqual(controller.last_cmd, (0.4, -0.2))
     
     def test_right_side_goal_with_sign_correction(self):
         """Test complete flow for right-side goal with standard ROS convention"""

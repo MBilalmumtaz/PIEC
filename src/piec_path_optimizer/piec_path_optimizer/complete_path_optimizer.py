@@ -133,9 +133,9 @@ class CompletePathOptimizer(Node):
         self.pinn_future_lock = threading.Lock()
         
         # Subscribers
-        self.odom_sub = self.create_subscription(Odometry, '/ukf/odom', self.odom_callback, 10)
+        self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.odom_callback, 10)
         self.goal_sub = self.create_subscription(PoseStamped, self.goal_topic, self.goal_callback, 10)
-        self.laser_sub = self.create_subscription(LaserScan, '/scan_fixed', self.laser_callback, 10)
+        self.laser_sub = self.create_subscription(LaserScan, self.laser_topic, self.laser_callback, 10)
         
         # Publishers
         self.path_pub = self.create_publisher(Path, '/piec/path', 10)
@@ -169,6 +169,8 @@ class CompletePathOptimizer(Node):
         """Load parameters from YAML"""
         default_params = {
             'goal_topic': '/goal_pose',
+            'odom_topic': '/ukf/odom',
+            'laser_topic': '/scan_fixed',
             'population_size': 40,
             'generations': 12,
             'crossover_rate': 0.8,
@@ -215,6 +217,8 @@ class CompletePathOptimizer(Node):
         
         # Store parameters
         self.goal_topic = self.get_parameter('goal_topic').value
+        self.odom_topic = self.get_parameter('odom_topic').value
+        self.laser_topic = self.get_parameter('laser_topic').value
         self.population_size = self.get_parameter('population_size').value
         self.generations = self.get_parameter('generations').value
         self.crossover_rate = self.get_parameter('crossover_rate').value
@@ -1131,114 +1135,6 @@ class CompletePathOptimizer(Node):
         thread = threading.Thread(target=self.run_enhanced_optimization)
         thread.daemon = True
         thread.start()
-    
-    def run_enhanced_optimization(self):
-        """Main optimization - WITH ALL FEATURES - FIXED PINN STATS"""
-        try:
-            start_time = time.time()
-            self.optimization_count += 1
-            
-            if self.robot_pose is None or self.goal_pose is None:
-                self.optimization_active = False
-                return
-            
-            start_x = self.robot_pose.pose.pose.position.x
-            start_y = self.robot_pose.pose.pose.position.y
-            goal_x = self.goal_pose.pose.position.x
-            goal_y = self.goal_pose.pose.position.y
-            
-            # BUG FIX: Throttle path updates - only regenerate if robot moved significantly
-            if not self.should_update_path(start_x, start_y):
-                return
-            
-            distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
-            if distance_to_goal < self.goal_completion_distance:
-                self.get_logger().info(f"🎯 Already at goal ({distance_to_goal:.2f}m)")
-                self.optimization_active = False
-                return
-            
-            # Check if we should use simple straight path
-            if self.should_use_simple_straight_path(start_x, start_y, goal_x, goal_y):
-                if self.debug_mode:
-                    self.get_logger().info("📏 Using simple straight path (clear path detected)")
-                # BUG FIX: Use straight path with intermediate waypoints
-                straight_path = self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
-                self.publish_path(straight_path)
-                self.optimization_active = False
-                return
-            
-            # Get current PINN stats before optimization
-            pinn_stats_before = self.objective_evaluator.pinn_usage
-            pinn_success_before = self.objective_evaluator.pinn_success
-            pinn_failures_before = self.objective_evaluator.pinn_failures
-            
-            # Also get the node's PINN stats
-            node_pinn_calls_before = self.pinn_call_count if hasattr(self, 'pinn_call_count') else 0
-            node_pinn_success_before = self.pinn_success_count if hasattr(self, 'pinn_success_count') else 0
-            
-            if self.stuck_count >= self.max_escape_attempts:
-                if self.debug_mode:
-                    self.get_logger().warn("🚨 Multiple stuck attempts - using free-space focused path")
-                best_path = self.generate_free_space_focused_path(start_x, start_y, goal_x, goal_y)
-            else:
-                best_path = self.run_enhanced_nsga2_with_free_space(
-                    start_x, start_y, goal_x, goal_y,
-                    self.population_size,
-                    self.generations
-                )
-            
-            if best_path is not None:
-                self.publish_path(best_path)
-            else:
-                fallback = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
-                self.publish_path(fallback)
-            
-            elapsed = time.time() - start_time
-            
-            # Calculate PINN usage during this optimization - FIXED
-            pinn_calls_this_optimization = 0
-            pinn_success_this_optimization = 0
-            
-            # Use BOTH sources for accurate tracking
-            if hasattr(self.objective_evaluator, 'pinn_usage'):
-                pinn_calls_this_optimization = self.objective_evaluator.pinn_usage - pinn_stats_before
-                pinn_success_this_optimization = self.objective_evaluator.pinn_success - pinn_success_before
-            
-            # Also check node's stats
-            node_pinn_calls = (self.pinn_call_count - node_pinn_calls_before) if hasattr(self, 'pinn_call_count') else 0
-            node_pinn_success = (self.pinn_success_count - node_pinn_success_before) if hasattr(self, 'pinn_success_count') else 0
-            
-            # Use the larger of the two counts
-            if node_pinn_calls > pinn_calls_this_optimization:
-                pinn_calls_this_optimization = node_pinn_calls
-                pinn_success_this_optimization = node_pinn_success
-            
-            if self.debug_mode:
-                if pinn_calls_this_optimization > 0:
-                    pinn_success_rate = (pinn_success_this_optimization / pinn_calls_this_optimization * 100) if pinn_calls_this_optimization > 0 else 0
-                    self.get_logger().info(
-                        f"✅ Optimization #{self.optimization_count} in {elapsed:.2f}s | "
-                        f"PINN: {pinn_calls_this_optimization} calls, {pinn_success_rate:.1f}% success"
-                    )
-                else:
-                    self.get_logger().info(f"✅ Optimization #{self.optimization_count} in {elapsed:.2f}s (no PINN calls)")
-        
-        except Exception as e:
-            self.get_logger().error(f"Optimization error: {e}")
-            import traceback
-            self.get_logger().error(traceback.format_exc())
-            
-            if self.robot_pose and self.goal_pose:
-                fallback = self.generate_quick_response_path(
-                    self.robot_pose.pose.pose.position.x,
-                    self.robot_pose.pose.pose.position.y,
-                    self.goal_pose.pose.position.x,
-                    self.goal_pose.pose.position.y
-                )
-                self.publish_path(fallback)
-        
-        finally:
-            self.optimization_active = False
     
     def generate_free_space_focused_path(self, start_x, start_y, goal_x, goal_y):
         """Generate free space focused path"""
@@ -2279,6 +2175,7 @@ class CompletePathOptimizer(Node):
         self.goal_pose = msg
         self.goal_position = (msg.pose.position.x, msg.pose.position.y)
         self.goal_received_time = time.time()  # ADD THIS - track when goal was received
+        self.last_path_position = None
         
         if self.debug_mode:
             self.get_logger().info(f"🎯 New goal: ({self.goal_position[0]:.2f}, {self.goal_position[1]:.2f})")
@@ -2433,4 +2330,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
