@@ -573,6 +573,21 @@ class CompletePathOptimizer(Node):
         """Determine if we should use a simple straight path - ALWAYS TRUE (curved paths are broken)"""
         # BUG FIX: Always use straight paths - curved path generation goes in wrong direction
         return True
+    
+    def should_update_path(self, start_x, start_y):
+        """Check if path should be updated based on robot movement - BUG FIX for frequent regeneration"""
+        if self.last_path_position is not None:
+            dist_moved = math.hypot(
+                start_x - self.last_path_position[0],
+                start_y - self.last_path_position[1]
+            )
+            if dist_moved < self.path_update_distance_threshold:
+                # Robot hasn't moved enough, don't regenerate path
+                return False
+        
+        # Update last path position
+        self.last_path_position = (start_x, start_y)
+        return True
 
     def check_progress(self):
         """Check if robot is making progress toward goal - ACCOUNT FOR SPEED"""
@@ -1133,17 +1148,8 @@ class CompletePathOptimizer(Node):
             goal_y = self.goal_pose.pose.position.y
             
             # BUG FIX: Throttle path updates - only regenerate if robot moved significantly
-            if self.last_path_position is not None:
-                dist_moved = math.hypot(
-                    start_x - self.last_path_position[0],
-                    start_y - self.last_path_position[1]
-                )
-                if dist_moved < self.path_update_distance_threshold:
-                    # Robot hasn't moved enough, don't regenerate path
-                    return
-            
-            # Update last path position
-            self.last_path_position = (start_x, start_y)
+            if not self.should_update_path(start_x, start_y):
+                return
             
             distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
             if distance_to_goal < self.goal_completion_distance:
@@ -1372,12 +1378,12 @@ class CompletePathOptimizer(Node):
     def generate_straight_path_with_waypoints(self, start_x, start_y, goal_x, goal_y):
         """Generate straight-line path with intermediate waypoints - BUG FIX for curved paths"""
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
-        # One waypoint every 0.5m, minimum of 2 points (start and goal)
-        num_waypoints = max(2, int(distance / 0.5))
+        # One waypoint every 0.5m, minimum of 2 points, maximum of 20 to prevent excessive waypoints
+        num_waypoints = min(max(2, int(distance / 0.5)), 20)
         
         path = []
         for i in range(num_waypoints):
-            t = i / (num_waypoints - 1) if num_waypoints > 1 else 1.0
+            t = i / (num_waypoints - 1)  # num_waypoints is guaranteed >= 2
             x = start_x + t * (goal_x - start_x)
             y = start_y + t * (goal_y - start_y)
             path.append((x, y))
@@ -1435,17 +1441,8 @@ class CompletePathOptimizer(Node):
             goal_y = self.goal_pose.pose.position.y
             
             # BUG FIX: Throttle path updates - only regenerate if robot moved significantly
-            if self.last_path_position is not None:
-                dist_moved = math.hypot(
-                    start_x - self.last_path_position[0],
-                    start_y - self.last_path_position[1]
-                )
-                if dist_moved < self.path_update_distance_threshold:
-                    # Robot hasn't moved enough, don't regenerate path
-                    return
-            
-            # Update last path position
-            self.last_path_position = (start_x, start_y)
+            if not self.should_update_path(start_x, start_y):
+                return
             
             distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
             if distance_to_goal < self.goal_completion_distance:
