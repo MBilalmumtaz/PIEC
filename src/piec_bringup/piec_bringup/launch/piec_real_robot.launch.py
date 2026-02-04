@@ -229,9 +229,9 @@ def generate_launch_description():
             "population_size": 15,
             "generations": 6,
             "optimization_timeout": 2.0,
-            "planning_rate": 1.5,
+            "planning_rate": 2.5,
             "waypoint_count": 8,
-            "max_curvature": 1.5,
+            "max_curvature": 1.0,
             "path_smoothing": True,
             "objective_weights": [0.15, 0.1, 0.15, 0.1, 0.1, 0.25, 0.15],
             "debug_mode": True,
@@ -264,7 +264,7 @@ def generate_launch_description():
             "control_frequency": 10.0,
             "linear_scale_factor": 0.95,
             "angular_scale_factor": 0.99,
-            "angular_sign_correction": -1.0,  # Scout Mini: invert angular sign (CW positive at motors)
+            "angular_sign_correction": -1.0,  # Ensure angular sign inversion is applied (matches controller param name)
             "debug_mode": True,
             "require_explicit_goal": False,  # Changed from True to False for autonomous path following
             "path_topic": "/piec/path",
@@ -308,11 +308,11 @@ def generate_launch_description():
         package="topic_tools",
         executable="mux",
         name="piec_cmd_vel_mux",
-        arguments=["/cmd_vel", "/cmd_vel_safe", "/cmd_vel_teleop"],
+        arguments=["/cmd_vel", "/cmd_vel_safe", "/cmd_vel_teleop", "/cmd_vel_piec"],
         parameters=[{
             "use_sim_time": use_sim_time,
             "lazy": True,
-            "active_topic": "cmd_vel_safe",
+            "active_topic": "/cmd_vel_safe",
         }],
         remappings=[
             ("/cmd_vel", "/cmd_vel"),
