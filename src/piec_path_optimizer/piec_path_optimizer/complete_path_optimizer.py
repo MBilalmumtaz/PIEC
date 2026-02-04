@@ -1376,19 +1376,19 @@ class CompletePathOptimizer(Node):
         return path
     
     def generate_straight_path_with_waypoints(self, start_x, start_y, goal_x, goal_y):
-        """Generate straight-line path with intermediate waypoints - BUG FIX for curved paths"""
+        """Generate straight-line path with evenly spaced waypoints - BUG FIX for curved paths"""
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
         
         # Handle case where start and goal are identical
         if distance < 0.01:  # Less than 1cm - essentially the same position
             return [(start_x, start_y)]
         
-        # One waypoint every 0.5m, minimum of 2, maximum of 20 to prevent excessive waypoints
-        num_waypoints = min(max(2, int(distance / 0.5)), 20)
+        # One waypoint every 0.3m for smooth control, minimum of 2, maximum of 20
+        num_waypoints = min(max(2, int(distance / 0.3) + 1), 20)
         
         path = []
         for i in range(num_waypoints):
-            t = i / (num_waypoints - 1)
+            t = i / (num_waypoints - 1)  # Safe: num_waypoints >= 2 always
             x = start_x + t * (goal_x - start_x)
             y = start_y + t * (goal_y - start_y)
             path.append((x, y))

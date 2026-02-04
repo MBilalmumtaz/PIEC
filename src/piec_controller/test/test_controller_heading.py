@@ -222,10 +222,10 @@ class TestAngularSignCorrection(unittest.TestCase):
         self.assertEqual(w_final, 0.5, "Positive sign correction should preserve sign")
     
     def test_sign_correction_negative(self):
-        """Test that negative sign correction inverts angular velocity"""
-        # Scout Mini: positive cmd_vel.angular.z causes CW rotation
-        # So we need to invert the sign
-        angular_sign_correction = -1.0
+        """Test that negative sign correction inverts angular velocity (LEGACY - now using 1.0)"""
+        # NOTE: This test documents old behavior with angular_sign_correction=-1.0
+        # Current configuration uses 1.0 (standard ROS convention)
+        angular_sign_correction = -1.0  # OLD value for reference
         
         # Controller computes negative w for right turn (CW)
         # But robot interprets positive w as CW, so we flip it
@@ -240,7 +240,7 @@ class TestAngularSignCorrection(unittest.TestCase):
         self.assertEqual(w_final, -0.5, "Negative correction should flip to negative for CCW")
     
     def test_right_side_goal_with_sign_correction(self):
-        """Test complete flow for right-side goal with sign correction"""
+        """Test complete flow for right-side goal with standard ROS convention"""
         # Robot at origin facing forward
         current_yaw = 0.0
         target_bearing = -math.pi/2  # Goal to the right
@@ -255,13 +255,13 @@ class TestAngularSignCorrection(unittest.TestCase):
         w_computed = angle_diff * heading_kp
         self.assertLess(w_computed, 0.0, "Standard computation gives negative w for right turn")
         
-        # Apply Scout Mini sign correction
-        angular_sign_correction = -1.0
+        # Apply standard ROS sign correction (1.0 = no inversion)
+        angular_sign_correction = 1.0
         w_final = w_computed * angular_sign_correction
-        self.assertGreater(w_final, 0.0, "After correction, w is positive for Scout Mini right turn")
+        self.assertLess(w_final, 0.0, "With standard ROS convention, w remains negative for right turn")
     
     def test_left_side_goal_with_sign_correction(self):
-        """Test complete flow for left-side goal with sign correction"""
+        """Test complete flow for left-side goal with standard ROS convention"""
         # Robot at origin facing forward
         current_yaw = 0.0
         target_bearing = math.pi/2  # Goal to the left
@@ -276,10 +276,10 @@ class TestAngularSignCorrection(unittest.TestCase):
         w_computed = angle_diff * heading_kp
         self.assertGreater(w_computed, 0.0, "Standard computation gives positive w for left turn")
         
-        # Apply Scout Mini sign correction
-        angular_sign_correction = -1.0
+        # Apply standard ROS sign correction (1.0 = no inversion)
+        angular_sign_correction = 1.0
         w_final = w_computed * angular_sign_correction
-        self.assertLess(w_final, 0.0, "After correction, w is negative for Scout Mini left turn")
+        self.assertGreater(w_final, 0.0, "With standard ROS convention, w remains positive for left turn")
 
 
 class TestGoalCompletionLogic(unittest.TestCase):
@@ -434,19 +434,19 @@ class TestAngularSignDoubleCorrection(unittest.TestCase):
         self.assertGreater(w_raw, 0, 
                           "Raw angular velocity should be POSITIVE for left turn")
         
-        # Simulate OLD buggy behavior (double sign correction)
-        angular_sign = -1.0  # Wrong default in old code
+        # Simulate OLD buggy behavior (double sign correction) - FIXED by changing to 1.0
+        angular_sign = 1.0  # Correct value (was -1.0 which caused wrong turns)
         angular_scale = 1.0
         
-        # OLD BUG: Applied in calculate_simple_control()
-        w_after_calculate = w_raw * angular_scale * angular_sign  # First application
-        self.assertLess(w_after_calculate, 0, 
-                       "After first sign correction, w becomes negative (WRONG)")
+        # With correct sign (1.0), no sign flip occurs
+        w_after_calculate = w_raw * angular_scale * angular_sign
+        self.assertGreater(w_after_calculate, 0, 
+                       "With correct sign (1.0), w remains positive for left turn")
         
-        # OLD BUG: Applied again in publish_cmd()
-        w_final_buggy = w_after_calculate * angular_sign  # Second application
-        self.assertGreater(w_final_buggy, 0, 
-                          "After double correction, sign flips back (but magnitude may differ)")
+        # Even if applied again (not recommended), result stays correct
+        w_final = w_after_calculate * angular_sign
+        self.assertGreater(w_final, 0, 
+                          "With correct sign, w stays positive for left turn")
         
         # NEW CORRECT behavior: sign correction only in publish_cmd()
         w_after_calculate_fixed = w_raw * angular_scale  # No sign correction here!
