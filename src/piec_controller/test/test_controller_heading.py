@@ -12,6 +12,11 @@ import os
 from types import SimpleNamespace
 
 
+def safe_mean(values):
+    """Return mean or 0.0 when empty."""
+    return sum(values) / len(values) if len(values) > 0 else 0.0
+
+
 # Mock rclpy before importing controller
 sys.modules['rclpy'] = MagicMock()
 sys.modules['rclpy.node'] = MagicMock()
@@ -26,7 +31,7 @@ sys.modules['ament_index_python'] = MagicMock()
 sys.modules['ament_index_python.packages'] = MagicMock()
 sys.modules['numpy'] = SimpleNamespace(
     clip=lambda value, min_val, max_val: max(min_val, min(max_val, value)),
-    mean=lambda values: sum(values) / len(values) if len(values) > 0 else 0.0,
+    mean=safe_mean,
 )
 sys.modules['piec_pinn_surrogate_msgs'] = MagicMock()
 sys.modules['piec_pinn_surrogate_msgs.srv'] = MagicMock()
