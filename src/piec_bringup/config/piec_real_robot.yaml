@@ -94,7 +94,7 @@ controller:
     # Calibration factors - BUG FIXES
     linear_scale_factor: 1.0
     angular_scale_factor: 1.0
-    angular_sign_correction: 1.0  # Standard ROS convention (previously was -1.0 which inverted turns)
+    angular_sign_correction: -1.0  # Scout Mini: invert sign (motors interpret positive as CW)
     
     # Control tuning
     rotate_in_place_angle_deg: 30.0  # Degrees before rotating in place
