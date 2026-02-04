@@ -42,6 +42,11 @@ class PINNService(Node):
         self.get_logger().info(f'PINN Service starting: {service_name}')
         self.get_logger().info('=' * 60)
         
+        self.declare_parameter('debug_mode', True)
+        self.declare_parameter('model_path', '')
+        self.debug_mode = self.get_parameter('debug_mode').value
+        self.model_path = self.get_parameter('model_path').value
+
         # Thread pool for handling multiple requests
         self.thread_pool = ThreadPoolExecutor(max_workers=4)
         self.request_lock = threading.Lock()
@@ -77,7 +82,10 @@ class PINNService(Node):
         """Load PINN model"""
         try:
             # Try multiple possible model paths
-            model_paths = [
+            model_paths = []
+            if self.model_path:
+                model_paths.append(self.model_path)
+            model_paths += [
                 '/home/agx3/scoutmini_ws3/src/piec_pinn_surrogate/models/pinn_physics.pt',
                 '/home/agx3/scoutmini_ws3/install/piec_pinn_surrogate/share/piec_pinn_surrogate/models/pinn_physics.pt',
                 os.path.join(os.path.dirname(__file__), '..', 'models', 'pinn_physics.pt'),
@@ -282,14 +290,6 @@ class PINNService(Node):
             response.stability = 0.8
             return response
     
-    @property
-    def debug_mode(self):
-        """Check if debug mode is enabled"""
-        try:
-            return self.get_parameter('debug_mode').value
-        except:
-            return True  # Default to True for debugging
-
 def main(args=None):
     rclpy.init(args=args)
     
