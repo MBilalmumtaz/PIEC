@@ -144,7 +144,11 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(enable_pinn),
         parameters=[{
-            "model_path": "/home/agx3/scoutmini_ws3/src/piec_pinn_surrogate/models/pinn_physics.pt",
+            "model_path": PathJoinSubstitution([
+                FindPackageShare("piec_pinn_surrogate"),
+                "models",
+                "pinn_physics.pt",
+            ]),
             "default_clearance": 2.0,
             "default_obstacle_density": 0.0,
             "use_laser_updates": True,
@@ -260,7 +264,7 @@ def generate_launch_description():
             "control_frequency": 10.0,
             "linear_scale_factor": 0.95,
             "angular_scale_factor": 0.99,
-            "angular_sign_correction": 1.0,  # Standard ROS convention: +w = CCW (left), -w = CW (right)
+            "angular_sign_correction": -1.0,  # Scout Mini: invert angular sign (CW positive at motors)
             "debug_mode": True,
             "require_explicit_goal": False,  # Changed from True to False for autonomous path following
             "path_topic": "/piec/path",
@@ -364,9 +368,12 @@ def generate_launch_description():
         condition=IfCondition(enable_piecnodes),
         parameters=[{
             "robot_mass": 50.0,  # Scout Mini mass in kg
-            "output_dir": "/home/agx3/piec_dynamics",
+            "output_dir": os.path.expanduser("~/piec_dynamics"),
             "use_sim_time": use_sim_time,
         }],
+        remappings=[
+            ("/imu/data", "/imu"),
+        ],
     )
     ld.add_action(dynamics_node)
     
@@ -377,7 +384,7 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(enable_piecnodes),
         parameters=[{
-            "output_dir": "/home/agx3/piec_metrics",
+            "output_dir": os.path.expanduser("~/piec_metrics"),
             "sampling_rate": 5.0,
             "use_sim_time": use_sim_time,
         }],

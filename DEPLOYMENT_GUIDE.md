@@ -128,7 +128,7 @@ controller_node:
     path_staleness_warning_threshold: 0.2  # Warning threshold
     
     # If robot rotates in wrong direction
-    angular_sign_correction: 1.0  # Try -1.0 if rotation is inverted
+    angular_sign_correction: -1.0  # Scout Mini default; use 1.0 if rotation is inverted
 ```
 
 ## Troubleshooting
