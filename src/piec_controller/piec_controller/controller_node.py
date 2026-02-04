@@ -498,7 +498,6 @@ class ControllerNode(Node):
         self.goal_position = (goal_x, goal_y)
         self.path = None
         self.path_received = False
-        self.last_path_update = self.get_clock().now()
         
         # Reset stuck detection - CRITICAL
         self.stuck_detected = False
