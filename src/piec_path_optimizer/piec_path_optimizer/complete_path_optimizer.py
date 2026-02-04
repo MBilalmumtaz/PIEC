@@ -1388,7 +1388,7 @@ class CompletePathOptimizer(Node):
         
         path = []
         for i in range(num_waypoints):
-            t = i / (num_waypoints - 1) if num_waypoints > 1 else 1.0
+            t = i / (num_waypoints - 1)  # Safe: num_waypoints >= 2 always
             x = start_x + t * (goal_x - start_x)
             y = start_y + t * (goal_y - start_y)
             path.append((x, y))
