@@ -96,9 +96,10 @@ controller:
     angular_scale_factor: 1.0
     angular_sign_correction: -1.0  # Scout Mini: invert sign (motors interpret positive as CW)
     
-    # Control tuning
-    rotate_in_place_angle_deg: 30.0  # Degrees before rotating in place
+    # Control tuning - FIX: Increased threshold to prevent spinning for lateral goals
+    rotate_in_place_angle_deg: 120.0  # Degrees before rotating in place - INCREASED from 30° to allow turning while moving
     max_heading_rate: 0.6  # rad/s - full angular velocity for rotation
+    rotation_timeout: 5.0  # Maximum time to spend rotating in place (seconds)
     
     # Safety distances
     emergency_stop_distance: 0.2

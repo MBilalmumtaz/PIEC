@@ -141,23 +141,24 @@ class TestControllerHeadingLogic(unittest.TestCase):
     
     def test_rotate_in_place_threshold(self):
         """Test rotate-in-place logic for large angle errors"""
-        # Test parameters - UPDATED to 90° threshold
-        rotate_in_place_angle_deg = 90.0
+        # Test parameters - UPDATED to 120° threshold to prevent spinning for lateral goals
+        rotate_in_place_angle_deg = 120.0
         rotate_threshold_rad = math.radians(rotate_in_place_angle_deg)
         
-        # Large angle error (120 degrees) - should trigger rotate in place
-        angle_diff = math.radians(120)
+        # Very large angle error (150 degrees exceeds 120° threshold) - should trigger rotate in place
+        angle_diff = math.radians(150)
         
-        # Should trigger rotate in place
+        # Should trigger rotate in place (150° > 120° threshold)
         should_rotate = abs(angle_diff) > rotate_threshold_rad
-        self.assertTrue(should_rotate, "Should rotate in place for 120° error")
+        self.assertTrue(should_rotate, "Should rotate in place for 150° error (exceeds 120° threshold)")
         
-        # Medium angle error (60 degrees) - should NOT trigger rotate in place
-        angle_diff = math.radians(60)
+        # Medium angle error (90 degrees, lateral goal) - should NOT trigger rotate in place
+        # This allows robot to turn while moving toward lateral goals
+        angle_diff = math.radians(90)
         
-        # Should NOT trigger rotate in place
+        # Should NOT trigger rotate in place - robot should turn while moving (90° < 120° threshold)
         should_rotate = abs(angle_diff) > rotate_threshold_rad
-        self.assertFalse(should_rotate, "Should not rotate in place for 60° error")
+        self.assertFalse(should_rotate, "Should not rotate in place for 90° error (below 120° threshold)")
     
     def test_heading_deadband(self):
         """Test heading deadband to prevent oscillation"""

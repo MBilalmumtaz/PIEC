@@ -8,11 +8,16 @@ import math
 import time
 
 # Progressive rotation threshold constants (in meters and radians)
+# FIX: Reduced thresholds to prevent infinite spinning when goals are to side/back
+# Previous values (90/60/30) caused robot to spin in place for lateral goals
 ROTATION_THRESHOLD_FAR_DISTANCE = 2.0  # Distance threshold for far range (meters)
 ROTATION_THRESHOLD_MID_DISTANCE = 0.5  # Distance threshold for mid range (meters)
-ROTATION_THRESHOLD_FAR_ANGLE = 90  # Rotation threshold when far from goal (degrees)
-ROTATION_THRESHOLD_MID_ANGLE = 60  # Rotation threshold in mid range (degrees)
-ROTATION_THRESHOLD_CLOSE_ANGLE = 30  # Rotation threshold when close to goal (degrees)
+ROTATION_THRESHOLD_FAR_ANGLE = 45  # Rotation threshold when far from goal (degrees) - REDUCED from 90
+ROTATION_THRESHOLD_MID_ANGLE = 30  # Rotation threshold in mid range (degrees) - REDUCED from 60
+ROTATION_THRESHOLD_CLOSE_ANGLE = 15  # Rotation threshold when close to goal (degrees) - REDUCED from 30
+
+# Maximum rotation time before forcing forward motion (seconds)
+MAX_ROTATION_TIME = 5.0
 
 
 class DynamicDWAComplete:
@@ -44,6 +49,10 @@ class DynamicDWAComplete:
         
         # Free space parameters
         self.free_space_threshold = 0.8
+        
+        # Rotation timeout tracking (FIX for infinite spinning)
+        self.fallback_rotation_start_time = None
+        self.max_rotation_time = MAX_ROTATION_TIME
         
         self.node.get_logger().info("Dynamic DWA Complete initialized with Free Space Awareness")
 
@@ -463,7 +472,7 @@ class DynamicDWAComplete:
         return min_clearance if min_clearance < float('inf') else 0.0
 
     def fallback_control(self, current_pose, path):
-        """Fallback control when DWA fails - IMPROVED for large heading errors"""
+        """Fallback control when DWA fails - IMPROVED for large heading errors with timeout protection"""
         if path is None or len(path.poses) == 0:
             return 0.0, 0.0
         
@@ -489,8 +498,8 @@ class DynamicDWAComplete:
         goal_y = path.poses[-1].pose.position.y
         goal_distance = math.hypot(goal_x - x, goal_y - y)
         
-        # FIX: Progressive rotation threshold - reduce as robot approaches goal
-        # Far from goal: 90°, Close to goal (< 2m): 60°, Very close (< 0.5m): 30°
+        # FIX: Progressive rotation threshold - reduced values to prevent infinite spinning
+        # Far from goal (>2m): 45°, Mid-range (0.5-2m): 30°, Close (<0.5m): 15°
         if goal_distance > ROTATION_THRESHOLD_FAR_DISTANCE:
             rotation_threshold = math.radians(ROTATION_THRESHOLD_FAR_ANGLE)
         elif goal_distance > ROTATION_THRESHOLD_MID_DISTANCE:
@@ -501,11 +510,36 @@ class DynamicDWAComplete:
         if distance < 0.3:
             v = 0.0
             w = 0.0
+            # Reset rotation timer when close to waypoint
+            self.fallback_rotation_start_time = None
         elif abs(angle_diff) > rotation_threshold:
-            # Turn in place for large errors
-            v = 0.0
-            w = np.clip(angle_diff * 0.7, -self.max_w * 0.6, self.max_w * 0.6)
+            # FIX: Add rotation timeout to prevent infinite spinning
+            current_time = time.time()
+            if self.fallback_rotation_start_time is None:
+                self.fallback_rotation_start_time = current_time
+            
+            rotation_duration = current_time - self.fallback_rotation_start_time
+            
+            if rotation_duration > self.max_rotation_time:
+                # Timeout exceeded - force forward motion with turning to break deadlock
+                # This prevents infinite spinning when goals are to the side/back
+                # Robot moves forward while turning, which should reduce angle error over time
+                v = min(0.2, distance * 0.3)  # Slow forward motion
+                w = np.clip(angle_diff * 0.5, -self.max_w * 0.4, self.max_w * 0.4)
+                if hasattr(self.node, 'debug_mode') and self.node.debug_mode:
+                    self.node.get_logger().warn(
+                        f"⚠️ Fallback rotation timeout ({rotation_duration:.1f}s) - forcing forward motion"
+                    )
+                # Keep timer running (don't reset) so we continue forward motion
+                # Timer will reset when angle_diff drops below threshold
+            else:
+                # Turn in place for large errors (normal behavior)
+                v = 0.0
+                w = np.clip(angle_diff * 0.7, -self.max_w * 0.6, self.max_w * 0.6)
         else:
+            # Reset rotation timer when not rotating in place
+            self.fallback_rotation_start_time = None
+            
             # Move forward with turning
             v = min(0.4, distance * 0.6)
             w = angle_diff * 0.5
