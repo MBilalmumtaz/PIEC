@@ -8,13 +8,14 @@ import math
 import time
 
 # Progressive rotation threshold constants (in meters and radians)
-# FIX: Reduced thresholds to prevent infinite spinning when goals are to side/back
-# Previous values (90/60/30) caused robot to spin in place for lateral goals
+# FIX: Increased thresholds to allow turning while moving for lateral/rear goals
+# Previous values (45/30/15) were too restrictive - robot would spin for goals >45° away
+# New values (120/90/60) match controller_node.py rotate_in_place_angle_deg setting
 ROTATION_THRESHOLD_FAR_DISTANCE = 2.0  # Distance threshold for far range (meters)
 ROTATION_THRESHOLD_MID_DISTANCE = 0.5  # Distance threshold for mid range (meters)
-ROTATION_THRESHOLD_FAR_ANGLE = 45  # Rotation threshold when far from goal (degrees) - REDUCED from 90
-ROTATION_THRESHOLD_MID_ANGLE = 30  # Rotation threshold in mid range (degrees) - REDUCED from 60
-ROTATION_THRESHOLD_CLOSE_ANGLE = 15  # Rotation threshold when close to goal (degrees) - REDUCED from 30
+ROTATION_THRESHOLD_FAR_ANGLE = 120  # Rotation threshold when far from goal (degrees) - INCREASED to 120°
+ROTATION_THRESHOLD_MID_ANGLE = 90  # Rotation threshold in mid range (degrees) - INCREASED to 90°
+ROTATION_THRESHOLD_CLOSE_ANGLE = 60  # Rotation threshold when close to goal (degrees) - INCREASED to 60°
 
 # Maximum rotation time before forcing forward motion (seconds)
 MAX_ROTATION_TIME = 5.0
@@ -498,8 +499,9 @@ class DynamicDWAComplete:
         goal_y = path.poses[-1].pose.position.y
         goal_distance = math.hypot(goal_x - x, goal_y - y)
         
-        # FIX: Progressive rotation threshold - reduced values to prevent infinite spinning
-        # Far from goal (>2m): 45°, Mid-range (0.5-2m): 30°, Close (<0.5m): 15°
+        # FIX: Progressive rotation threshold - increased values to allow turning while moving
+        # Far from goal (>2m): 120°, Mid-range (0.5-2m): 90°, Close (<0.5m): 60°
+        # Only rotate in place for extreme angles (>120°), otherwise turn while moving
         if goal_distance > ROTATION_THRESHOLD_FAR_DISTANCE:
             rotation_threshold = math.radians(ROTATION_THRESHOLD_FAR_ANGLE)
         elif goal_distance > ROTATION_THRESHOLD_MID_DISTANCE:
