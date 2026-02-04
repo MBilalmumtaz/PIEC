@@ -21,6 +21,7 @@ class UKFNode(Node):
         # CRITICAL: New parameters for real robot
         self.declare_parameter('use_imu_orientation', True)
         self.declare_parameter('initial_yaw', 0.0)
+        self.declare_parameter('imu_yaw_offset', 0.0)
         self.declare_parameter('use_wheel_velocity', True)
         self.declare_parameter('debug_mode', True)
 
@@ -30,6 +31,7 @@ class UKFNode(Node):
         self.dt = float(self.get_parameter('dt').value)
         self.use_imu_orientation = self.get_parameter('use_imu_orientation').value
         self.initial_yaw = float(self.get_parameter('initial_yaw').value)
+        self.imu_yaw_offset = float(self.get_parameter('imu_yaw_offset').value)
         self.use_wheel_velocity = self.get_parameter('use_wheel_velocity').value
         self.debug_mode = self.get_parameter('debug_mode').value
 
@@ -172,7 +174,8 @@ class UKFNode(Node):
                 self.get_logger().info(f"IMU initialized with yaw: {yaw:.3f} rad")
         
         # Store current IMU values
-        self.current_imu_yaw = yaw - self.initial_imu_yaw  # Apply calibration
+        # Remove startup bias, then apply static frame correction.
+        self.current_imu_yaw = yaw - self.initial_imu_yaw + self.imu_yaw_offset
         self.current_imu_wz = msg.angular_velocity.z
         
         # If initialized, update UKF with IMU angular velocity

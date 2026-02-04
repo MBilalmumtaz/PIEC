@@ -3,7 +3,7 @@ ros__parameters:
   # PINN Integration Parameters
   use_pinn_predictions: true
   pinn_weight: 0.7
-  pinn_service_name: '/pinn_service/evaluate_trajectory'
+  pinn_service_name: '/evaluate_trajectory'
   pinn_timeout: 2.0
   pinn_retry_count: 3
   

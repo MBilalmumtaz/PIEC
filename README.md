@@ -483,6 +483,9 @@ Motor responsiveness: 45.2%
 
 ## Advanced Configuration
 
+### UKF and PINN Integration Flow
+`piec_ukf_localization/ukf_node.py` fuses wheel odometry and IMU to publish `/ukf/odom` for the controller and path optimizer. `piec_pinn_surrogate/pinn_service.py` exposes `/evaluate_trajectory`, which the path optimizer calls to score candidate paths; `piec_pinn_surrogate/pinn_model.py` defines the PINN architecture used to estimate energy and stability. Train models with `piec_pinn_surrogate/train_pinn.py` and point `pinn_service` at the generated `models/pinn_physics.pt` via the `model_path` parameter.
+
 ### Controller Parameters
 See `src/piec_bringup/piec_bringup/launch/piec_real_robot.launch.py`:
 - `max_linear_vel`: Maximum forward speed (m/s)
