@@ -1538,12 +1538,9 @@ class ControllerNode(Node):
             else:
                 # BUG FIX: Explicitly set v=0.0 when rotating in place
                 v = 0.0
-                # Use full angular velocity with safe sign handling
-                if angle_diff != 0:
-                    w = np.sign(angle_diff) * self.max_heading_rate
-                else:
-                    # Should never happen in rotate-in-place mode, but handle gracefully
-                    w = self.max_heading_rate if angle_diff >= 0 else -self.max_heading_rate
+                # Use full angular velocity - angle_diff should never be zero here
+                # since we're in rotate-in-place mode (abs(angle_diff) > rotate_threshold_rad)
+                w = np.sign(angle_diff) * self.max_heading_rate
                 if self.debug_mode:
                     self.get_logger().info(
                         f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}, duration={rotation_duration:.1f}s"

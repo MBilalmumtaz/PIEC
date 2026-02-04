@@ -94,7 +94,7 @@ controller:
     # Calibration factors - BUG FIXES
     linear_scale_factor: 1.0
     angular_scale_factor: 1.0
-    angular_sign_correction: 1.0  # Standard ROS convention (was inverted)
+    angular_sign_correction: 1.0  # Standard ROS convention (previously was -1.0 which inverted turns)
     
     # Control tuning
     rotate_in_place_angle_deg: 30.0  # Degrees before rotating in place
