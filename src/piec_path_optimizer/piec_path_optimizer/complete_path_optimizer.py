@@ -555,19 +555,25 @@ class CompletePathOptimizer(Node):
         
         return True
     
+    def requires_significant_turning(self, start_x, start_y, goal_x, goal_y, threshold_degrees=30):
+        """Check if goal requires significant turning from current robot orientation"""
+        if self.robot_pose is None:
+            return False
+        
+        robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+        goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+        angle_diff = abs(math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw)))
+        
+        return angle_diff > math.radians(threshold_degrees)
+    
     def should_use_simple_straight_path(self, start_x, start_y, goal_x, goal_y):
         """Determine if we should use a simple straight path - REAL ROBOT FIX"""
         distance_to_goal = math.hypot(goal_x - start_x, goal_y - start_y)
         
         # IMPORTANT: Check if goal requires significant turning
-        if self.robot_pose is not None:
-            robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
-            goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
-            angle_diff = abs(math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw)))
-            
-            # If goal is more than 30 degrees off, DON'T use simple straight path
-            if angle_diff > math.radians(30):
-                return False
+        # If goal is more than 30 degrees off, DON'T use simple straight path
+        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=30):
+            return False
         
         # Only use straight path for very short distances AND clear path
         if distance_to_goal < 1.0:
@@ -1375,7 +1381,9 @@ class CompletePathOptimizer(Node):
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
         
         # Add intermediate waypoints along a curve
-        num_waypoints = max(3, int(distance / 0.5))  # One waypoint every 0.5m
+        # Note: For short distances, uses minimum of 3 waypoints. For longer distances,
+        # spacing is approximately 0.5m but varies based on total distance
+        num_waypoints = max(3, int(distance / 0.5))  # At least 3 waypoints
         
         for i in range(1, num_waypoints):
             t = i / num_waypoints
@@ -1424,19 +1432,18 @@ class CompletePathOptimizer(Node):
                 return
             
             # NEW: Check if goal requires significant turning - use curved path
-            if self.robot_pose is not None:
+            if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=30):
+                # Calculate angle for logging
                 robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
                 goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
                 angle_diff = abs(math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw)))
                 
-                # If goal requires turning > 30 degrees, use curved path
-                if angle_diff > math.radians(30):
-                    if self.debug_mode:
-                        self.get_logger().info(f"🔄 Using curved path for turning (angle={math.degrees(angle_diff):.1f}°)")
-                    curved_path = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
-                    self.publish_path(curved_path)
-                    self.optimization_active = False
-                    return
+                if self.debug_mode:
+                    self.get_logger().info(f"🔄 Using curved path for turning (angle={math.degrees(angle_diff):.1f}°)")
+                curved_path = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
+                self.publish_path(curved_path)
+                self.optimization_active = False
+                return
             
             # Get current PINN stats before optimization
             pinn_stats_before = self.objective_evaluator.pinn_usage

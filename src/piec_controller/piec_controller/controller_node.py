@@ -1491,6 +1491,7 @@ class ControllerNode(Node):
         # FIX: For close-range goals (< close_range_distance), use proportional control instead of rotate-then-move
         if distance < self.close_range_distance:
             # Close to goal - use gentle proportional control with FULL angular control
+            # Note: Previous 0.7 multiplier was preventing effective turning in close-range scenarios
             v = min(self.max_linear_vel * 0.4, distance * 0.5)  # Slower linear
             w = angle_diff * self.heading_kp  # FULL angular control, no reduction
             w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
