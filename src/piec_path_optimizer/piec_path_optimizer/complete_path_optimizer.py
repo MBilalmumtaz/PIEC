@@ -2175,7 +2175,7 @@ class CompletePathOptimizer(Node):
         self.goal_pose = msg
         self.goal_position = (msg.pose.position.x, msg.pose.position.y)
         self.goal_received_time = time.time()  # ADD THIS - track when goal was received
-        # Reset path tracking for immediate regeneration on new goals.
+        # Reset path tracking to enable immediate regeneration on new goals.
         self.last_path_position = None
         
         if self.debug_mode:
