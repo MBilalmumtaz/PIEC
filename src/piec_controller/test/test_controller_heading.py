@@ -31,7 +31,7 @@ sys.modules['ament_index_python'] = MagicMock()
 sys.modules['ament_index_python.packages'] = MagicMock()
 sys.modules['numpy'] = SimpleNamespace(
     clip=clip,
-    mean=lambda values: sum(values) / len(values) if values else 0.0,
+    mean=lambda values: 0.0 if not values else sum(values) / len(values),
 )
 sys.modules['piec_pinn_surrogate_msgs'] = MagicMock()
 sys.modules['piec_pinn_surrogate_msgs.srv'] = MagicMock()
@@ -319,7 +319,7 @@ class TestCommandTrackingUpdates(unittest.TestCase):
         controller.publish_cmd(0.4, -0.2)
 
         self.assertEqual(controller.last_cmd, (0.4, -0.2))
-    
+
 
 
 class TestGoalCompletionLogic(unittest.TestCase):
