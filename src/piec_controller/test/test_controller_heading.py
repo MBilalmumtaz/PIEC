@@ -299,7 +299,7 @@ class TestCommandTrackingUpdates(unittest.TestCase):
         """Ensure last_cmd stores raw values in publish_cmd."""
         from piec_controller.controller_node import ControllerNode
 
-        controller = ControllerNode.__new__(ControllerNode)
+        controller = MagicMock(spec=ControllerNode)
         controller.last_cmd = (0.0, 0.0)
         controller.linear_scale = 1.0
         controller.angular_scale = 1.0
@@ -316,7 +316,7 @@ class TestCommandTrackingUpdates(unittest.TestCase):
         controller.commanded_velocity_history = MagicMock()
         controller.get_logger = MagicMock(return_value=MagicMock())
 
-        controller.publish_cmd(0.4, -0.2)
+        ControllerNode.publish_cmd(controller, 0.4, -0.2)
 
         self.assertEqual(controller.last_cmd, (0.4, -0.2))
 
