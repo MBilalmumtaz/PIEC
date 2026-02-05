@@ -71,9 +71,9 @@ class ControllerNode(Node):
         
         # angular_sign_correction: Corrects angular velocity sign convention (default: 1.0)
         # Standard ROS: +w = counter-clockwise (CCW), -w = clockwise (CW)
-        # Scout Mini: +cmd_vel.angular.z causes clockwise (CW) rotation
-        # Set to -1.0 for Scout Mini to invert controller's standard ROS commands
-        # Set to +1.0 for robots following standard ROS convention
+        # Scout Mini follows standard ROS convention: +w = CCW (left turn), -w = CW (right turn)
+        # Set to 1.0 for standard ROS convention (including Scout Mini)
+        # Set to -1.0 only if your robot has inverted angular velocity
         self.declare_parameter('angular_sign_correction', 1.0)
         
         self.linear_scale = self.get_parameter('linear_scale_factor').value
@@ -153,6 +153,8 @@ class ControllerNode(Node):
         self.rotation_start_time = None
         self.is_rotating_in_place = False  # Flag to track when rotating in place
         self.free_space_escape_preferred = True
+        self.last_rotation_direction = None  # Track last rotation direction to prevent oscillation
+        self.rotation_direction_lock_time = None  # Lock direction for stability
         
         # Oscillation detection - NEW
         self.angular_history = deque(maxlen=30)  # Increased from 20 to 30
@@ -302,8 +304,10 @@ class ControllerNode(Node):
             'heading_kp': 1.5,  # Proportional gain for heading control
             'heading_deadband_deg': 2.0,  # Deadband for small angle errors (degrees)
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
-            'rotate_in_place_angle_deg': 180.0,  # Rotate in place if angle error > this (degrees) - INCREASED to 120° to allow turning while moving for lateral goals
+            'rotate_in_place_angle_deg': 60.0,  # Rotate in place if angle error > this (degrees) - lowered to prevent oscillation
             'rotation_timeout': 5.0,  # Maximum time to spend rotating in place (seconds) - REDUCED from 10s to prevent long spinning
+            'rotation_direction_lock_duration': 2.0,  # Time (seconds) to lock rotation direction to prevent oscillation
+            'rotation_min_angle_for_lock_deg': 10.0,  # Minimum angle error (degrees) to maintain locked direction
             'close_range_distance': 0.5,  # Distance threshold for close-range proportional control (meters) - INCREASED from 0.3 to allow smoother approach
             
             # Path validation parameters
@@ -379,6 +383,8 @@ class ControllerNode(Node):
         self.max_heading_rate = float(self.get_parameter('max_heading_rate').value)
         self.rotate_in_place_angle_deg = float(self.get_parameter('rotate_in_place_angle_deg').value)
         self.rotation_timeout = float(self.get_parameter('rotation_timeout').value)
+        self.rotation_direction_lock_duration = float(self.get_parameter('rotation_direction_lock_duration').value)
+        self.rotation_min_angle_for_lock_deg = float(self.get_parameter('rotation_min_angle_for_lock_deg').value)
         self.close_range_distance = float(self.get_parameter('close_range_distance').value)
         
         # Path validation parameters
@@ -1540,9 +1546,31 @@ class ControllerNode(Node):
             else:
                 # BUG FIX: Explicitly set v=0.0 when rotating in place
                 v = 0.0
-                # Use full angular velocity - angle_diff should never be zero here
-                # since we're in rotate-in-place mode (abs(angle_diff) > rotate_threshold_rad)
-                w = np.sign(angle_diff) * self.max_heading_rate
+                
+                # Anti-oscillation: Lock rotation direction for stability
+                current_direction = np.sign(angle_diff)
+                current_time = time.monotonic()
+                
+                # If we have a locked direction and it's recent, maintain it
+                # This prevents rapid direction switching
+                if (self.rotation_direction_lock_time is not None and 
+                    current_time - self.rotation_direction_lock_time < self.rotation_direction_lock_duration and
+                    self.last_rotation_direction is not None):
+                    # Maintain locked direction unless angle error is very small
+                    min_angle_for_lock_rad = math.radians(self.rotation_min_angle_for_lock_deg)
+                    if abs(angle_diff) > min_angle_for_lock_rad:
+                        w = self.last_rotation_direction * self.max_heading_rate
+                    else:
+                        # Small error - allow direction change
+                        w = current_direction * self.max_heading_rate
+                        self.last_rotation_direction = current_direction
+                        self.rotation_direction_lock_time = current_time
+                else:
+                    # Set new direction
+                    w = current_direction * self.max_heading_rate
+                    self.last_rotation_direction = current_direction
+                    self.rotation_direction_lock_time = current_time
+                
                 if self.debug_mode:
                     self.get_logger().info(
                         f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}, duration={rotation_duration:.1f}s"

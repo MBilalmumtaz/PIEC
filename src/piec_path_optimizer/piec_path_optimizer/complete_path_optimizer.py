@@ -191,6 +191,7 @@ class CompletePathOptimizer(Node):
             'escape_clearance': 0.7,
             'max_escape_attempts': 3,
             'escape_cooldown': 6.0,
+            'significant_turning_threshold_deg': 30.0,  # Threshold for curved path generation
             'obstacle_grid_size': 150,
             'obstacle_grid_resolution': 0.1,
             'debug_mode': True,
@@ -240,6 +241,7 @@ class CompletePathOptimizer(Node):
         self.escape_clearance = self.get_parameter('escape_clearance').value
         self.max_escape_attempts = self.get_parameter('max_escape_attempts').value
         self.escape_cooldown = self.get_parameter('escape_cooldown').value
+        self.significant_turning_threshold_deg = self.get_parameter('significant_turning_threshold_deg').value
         self.debug_mode = self.get_parameter('debug_mode').value
         self.goal_completion_distance = self.get_parameter('goal_completion_distance').value
         self.robot_radius = self.get_parameter('robot_radius').value
@@ -574,8 +576,21 @@ class CompletePathOptimizer(Node):
         return angle_diff > math.radians(threshold_degrees)
     
     def should_use_simple_straight_path(self, start_x, start_y, goal_x, goal_y):
-        """Determine if we should use a simple straight path - ALWAYS TRUE (curved paths are broken)"""
-        # BUG FIX: Always use straight paths - curved path generation goes in wrong direction
+        """Determine if we should use a simple straight path vs curved/optimized path"""
+        # Use simple straight path if:
+        # 1. Path is clear of obstacles AND
+        # 2. Goal doesn't require significant turning (< 30 degrees)
+        
+        # Check if path is clear
+        if not self.is_path_clear(start_x, start_y, goal_x, goal_y):
+            return False  # Need curved/optimized path to avoid obstacles
+        
+        # Check if significant turning is required
+        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, 
+                                             threshold_degrees=self.significant_turning_threshold_deg):
+            return False  # Need curved path for smooth turning
+        
+        # Path is clear and doesn't require significant turning
         return True
     
     def should_update_path(self, start_x, start_y):
