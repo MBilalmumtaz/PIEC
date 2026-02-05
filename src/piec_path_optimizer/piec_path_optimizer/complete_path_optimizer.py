@@ -574,8 +574,20 @@ class CompletePathOptimizer(Node):
         return angle_diff > math.radians(threshold_degrees)
     
     def should_use_simple_straight_path(self, start_x, start_y, goal_x, goal_y):
-        """Determine if we should use a simple straight path - ALWAYS TRUE (curved paths are broken)"""
-        # BUG FIX: Always use straight paths - curved path generation goes in wrong direction
+        """Determine if we should use a simple straight path vs curved/optimized path"""
+        # Use simple straight path if:
+        # 1. Path is clear of obstacles AND
+        # 2. Goal doesn't require significant turning (< 30 degrees)
+        
+        # Check if path is clear
+        if not self.is_path_clear(start_x, start_y, goal_x, goal_y):
+            return False  # Need curved/optimized path to avoid obstacles
+        
+        # Check if significant turning is required
+        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=30):
+            return False  # Need curved path for smooth turning
+        
+        # Path is clear and doesn't require significant turning
         return True
     
     def should_update_path(self, start_x, start_y):

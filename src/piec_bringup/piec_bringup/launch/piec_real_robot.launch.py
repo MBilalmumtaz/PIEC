@@ -264,7 +264,7 @@ def generate_launch_description():
             "control_frequency": 10.0,
             "linear_scale_factor": 0.95,
             "angular_scale_factor": 0.99,
-            "angular_sign_correction": -1.0,  # Ensure angular sign inversion is applied (matches controller param name)
+            "angular_sign_correction": 1.0,  # FIX: Scout Mini follows standard ROS convention (+w=CCW, -w=CW), no inversion needed
             "debug_mode": True,
             "require_explicit_goal": False,  # Changed from True to False for autonomous path following
             "path_topic": "/piec/path",

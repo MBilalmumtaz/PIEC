@@ -71,9 +71,9 @@ class ControllerNode(Node):
         
         # angular_sign_correction: Corrects angular velocity sign convention (default: 1.0)
         # Standard ROS: +w = counter-clockwise (CCW), -w = clockwise (CW)
-        # Scout Mini: +cmd_vel.angular.z causes clockwise (CW) rotation
-        # Set to -1.0 for Scout Mini to invert controller's standard ROS commands
-        # Set to +1.0 for robots following standard ROS convention
+        # Scout Mini follows standard ROS convention: +w = CCW (left turn), -w = CW (right turn)
+        # Set to 1.0 for standard ROS convention (including Scout Mini)
+        # Set to -1.0 only if your robot has inverted angular velocity
         self.declare_parameter('angular_sign_correction', 1.0)
         
         self.linear_scale = self.get_parameter('linear_scale_factor').value
@@ -302,7 +302,7 @@ class ControllerNode(Node):
             'heading_kp': 1.5,  # Proportional gain for heading control
             'heading_deadband_deg': 2.0,  # Deadband for small angle errors (degrees)
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
-            'rotate_in_place_angle_deg': 180.0,  # Rotate in place if angle error > this (degrees) - INCREASED to 120° to allow turning while moving for lateral goals
+            'rotate_in_place_angle_deg': 60.0,  # Rotate in place if angle error > this (degrees) - lowered to prevent oscillation
             'rotation_timeout': 5.0,  # Maximum time to spend rotating in place (seconds) - REDUCED from 10s to prevent long spinning
             'close_range_distance': 0.5,  # Distance threshold for close-range proportional control (meters) - INCREASED from 0.3 to allow smoother approach
             
