@@ -196,15 +196,13 @@ class UKFNode(Node):
         self.current_imu_wz = msg.angular_velocity.z
         
         # Debug: Log yaw transformation (every 100th message to avoid spam)
-        if self.debug_mode and hasattr(self, '_imu_debug_counter'):
+        if self.debug_mode:
             self._imu_debug_counter += 1
             if self._imu_debug_counter % 100 == 0:
                 self.get_logger().info(
                     f"IMU yaw transform: raw={yaw:.3f} → initial={self.initial_imu_yaw:.3f} "
                     f"→ offset={self.imu_yaw_offset:.3f} → final={self.current_imu_yaw:.3f} rad"
                 )
-        elif self.debug_mode:
-            self._imu_debug_counter = 0
         
         # If initialized, update UKF with IMU angular velocity
         if self.initialized:

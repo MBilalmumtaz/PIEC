@@ -167,7 +167,7 @@ def generate_launch_description():
         parameters=[{
             **scout_mini_params,
             "odom_topic": "/odometry",
-            "imu_topic": "/openzen/data",  # Real IMU topic from OpenZen driver
+            "imu_topic": "/openzen/data",  # OpenZen driver publishes directly to this topic (not /imu)
             "publish_topic": "/ukf/odom",
             
             # CRITICAL NEW PARAMETERS
