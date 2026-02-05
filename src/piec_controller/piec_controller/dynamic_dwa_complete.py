@@ -13,9 +13,9 @@ import time
 # New values (120/90/60) match controller_node.py rotate_in_place_angle_deg setting
 ROTATION_THRESHOLD_FAR_DISTANCE = 2.0  # Distance threshold for far range (meters)
 ROTATION_THRESHOLD_MID_DISTANCE = 0.5  # Distance threshold for mid range (meters)
-ROTATION_THRESHOLD_FAR_ANGLE = 120  # Rotation threshold when far from goal (degrees) - INCREASED to 120°
-ROTATION_THRESHOLD_MID_ANGLE = 90  # Rotation threshold in mid range (degrees) - INCREASED to 90°
-ROTATION_THRESHOLD_CLOSE_ANGLE = 60  # Rotation threshold when close to goal (degrees) - INCREASED to 60°
+ROTATION_THRESHOLD_FAR_ANGLE = 180  # Rotation threshold when far from goal (degrees) - INCREASED to 120°
+ROTATION_THRESHOLD_MID_ANGLE = 150  # Rotation threshold in mid range (degrees) - INCREASED to 90°
+ROTATION_THRESHOLD_CLOSE_ANGLE = 120  # Rotation threshold when close to goal (degrees) - INCREASED to 60°
 
 # Maximum rotation time before forcing forward motion (seconds)
 MAX_ROTATION_TIME = 5.0
