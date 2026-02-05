@@ -582,7 +582,7 @@ class CompletePathOptimizer(Node):
         # 2. Goal doesn't require significant turning (< 30 degrees)
         
         # Check if path is clear
-        if not self.is_path_clear(start_x, start_y, goal_x, goal_y):
+        if not self.is_straight_path_clear(start_x, start_y, goal_x, goal_y):
             return False  # Need curved/optimized path to avoid obstacles
         
         # Check if significant turning is required
