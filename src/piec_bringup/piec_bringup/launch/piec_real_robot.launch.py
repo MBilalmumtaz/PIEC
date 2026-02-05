@@ -171,7 +171,7 @@ def generate_launch_description():
             "publish_topic": "/ukf/odom",
             
             # CRITICAL NEW PARAMETERS
-            "imu_yaw_offset": -0.94,  # -54° in radians
+            "imu_yaw_offset": 0.0,  # CHANGED from -0.94 to 0.0
             "use_imu_orientation": True,
             "use_wheel_velocity": True,
             "use_wheel_odometry": True,
@@ -278,7 +278,7 @@ def generate_launch_description():
             "heading_kp": 1.5,
             "heading_deadband_deg": 2.0,
             "max_heading_rate": 0.6,
-            "rotate_in_place_angle_deg": 45.0,
+            "rotate_in_place_angle_deg": 180.0,
             "goal_stability_time": 2.0,
         }],
     )
