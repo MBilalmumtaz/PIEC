@@ -153,6 +153,8 @@ class ControllerNode(Node):
         self.rotation_start_time = None
         self.is_rotating_in_place = False  # Flag to track when rotating in place
         self.free_space_escape_preferred = True
+        self.last_rotation_direction = None  # Track last rotation direction to prevent oscillation
+        self.rotation_direction_lock_time = None  # Lock direction for stability
         
         # Oscillation detection - NEW
         self.angular_history = deque(maxlen=30)  # Increased from 20 to 30
@@ -1540,9 +1542,30 @@ class ControllerNode(Node):
             else:
                 # BUG FIX: Explicitly set v=0.0 when rotating in place
                 v = 0.0
-                # Use full angular velocity - angle_diff should never be zero here
-                # since we're in rotate-in-place mode (abs(angle_diff) > rotate_threshold_rad)
-                w = np.sign(angle_diff) * self.max_heading_rate
+                
+                # Anti-oscillation: Lock rotation direction for stability
+                current_direction = np.sign(angle_diff)
+                current_time = time.monotonic()
+                
+                # If we have a locked direction and it's recent (within 2 seconds), maintain it
+                # This prevents rapid direction switching
+                if (self.rotation_direction_lock_time is not None and 
+                    current_time - self.rotation_direction_lock_time < 2.0 and
+                    self.last_rotation_direction is not None):
+                    # Maintain locked direction unless angle error is very small
+                    if abs(angle_diff) > math.radians(10):  # Only maintain if error > 10°
+                        w = self.last_rotation_direction * self.max_heading_rate
+                    else:
+                        # Small error - allow direction change
+                        w = current_direction * self.max_heading_rate
+                        self.last_rotation_direction = current_direction
+                        self.rotation_direction_lock_time = current_time
+                else:
+                    # Set new direction
+                    w = current_direction * self.max_heading_rate
+                    self.last_rotation_direction = current_direction
+                    self.rotation_direction_lock_time = current_time
+                
                 if self.debug_mode:
                     self.get_logger().info(
                         f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}, duration={rotation_duration:.1f}s"
