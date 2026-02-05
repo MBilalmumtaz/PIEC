@@ -191,6 +191,7 @@ class CompletePathOptimizer(Node):
             'escape_clearance': 0.7,
             'max_escape_attempts': 3,
             'escape_cooldown': 6.0,
+            'significant_turning_threshold_deg': 30.0,  # Threshold for curved path generation
             'obstacle_grid_size': 150,
             'obstacle_grid_resolution': 0.1,
             'debug_mode': True,
@@ -240,6 +241,7 @@ class CompletePathOptimizer(Node):
         self.escape_clearance = self.get_parameter('escape_clearance').value
         self.max_escape_attempts = self.get_parameter('max_escape_attempts').value
         self.escape_cooldown = self.get_parameter('escape_cooldown').value
+        self.significant_turning_threshold_deg = self.get_parameter('significant_turning_threshold_deg').value
         self.debug_mode = self.get_parameter('debug_mode').value
         self.goal_completion_distance = self.get_parameter('goal_completion_distance').value
         self.robot_radius = self.get_parameter('robot_radius').value
@@ -584,7 +586,8 @@ class CompletePathOptimizer(Node):
             return False  # Need curved/optimized path to avoid obstacles
         
         # Check if significant turning is required
-        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=30):
+        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, 
+                                             threshold_degrees=self.significant_turning_threshold_deg):
             return False  # Need curved path for smooth turning
         
         # Path is clear and doesn't require significant turning

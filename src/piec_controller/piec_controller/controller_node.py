@@ -306,6 +306,8 @@ class ControllerNode(Node):
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
             'rotate_in_place_angle_deg': 60.0,  # Rotate in place if angle error > this (degrees) - lowered to prevent oscillation
             'rotation_timeout': 5.0,  # Maximum time to spend rotating in place (seconds) - REDUCED from 10s to prevent long spinning
+            'rotation_direction_lock_duration': 2.0,  # Time (seconds) to lock rotation direction to prevent oscillation
+            'rotation_min_angle_for_lock_deg': 10.0,  # Minimum angle error (degrees) to maintain locked direction
             'close_range_distance': 0.5,  # Distance threshold for close-range proportional control (meters) - INCREASED from 0.3 to allow smoother approach
             
             # Path validation parameters
@@ -381,6 +383,8 @@ class ControllerNode(Node):
         self.max_heading_rate = float(self.get_parameter('max_heading_rate').value)
         self.rotate_in_place_angle_deg = float(self.get_parameter('rotate_in_place_angle_deg').value)
         self.rotation_timeout = float(self.get_parameter('rotation_timeout').value)
+        self.rotation_direction_lock_duration = float(self.get_parameter('rotation_direction_lock_duration').value)
+        self.rotation_min_angle_for_lock_deg = float(self.get_parameter('rotation_min_angle_for_lock_deg').value)
         self.close_range_distance = float(self.get_parameter('close_range_distance').value)
         
         # Path validation parameters
@@ -1547,13 +1551,14 @@ class ControllerNode(Node):
                 current_direction = np.sign(angle_diff)
                 current_time = time.monotonic()
                 
-                # If we have a locked direction and it's recent (within 2 seconds), maintain it
+                # If we have a locked direction and it's recent, maintain it
                 # This prevents rapid direction switching
                 if (self.rotation_direction_lock_time is not None and 
-                    current_time - self.rotation_direction_lock_time < 2.0 and
+                    current_time - self.rotation_direction_lock_time < self.rotation_direction_lock_duration and
                     self.last_rotation_direction is not None):
                     # Maintain locked direction unless angle error is very small
-                    if abs(angle_diff) > math.radians(10):  # Only maintain if error > 10°
+                    min_angle_for_lock_rad = math.radians(self.rotation_min_angle_for_lock_deg)
+                    if abs(angle_diff) > min_angle_for_lock_rad:
                         w = self.last_rotation_direction * self.max_heading_rate
                     else:
                         # Small error - allow direction change
