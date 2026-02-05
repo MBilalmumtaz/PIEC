@@ -85,6 +85,9 @@ class UKFNode(Node):
         self.measurement_count = 0
         self.last_stats_print = self.get_clock().now()
         
+        # Debug message throttling
+        self._imu_debug_counter = 0
+        
         self.get_logger().info(f'UKF node started. odom_topic: {self.odom_topic} imu_topic: {self.imu_topic}')
         self.get_logger().info(f'State dimension: {self.x.size}, Use IMU orientation: {self.use_imu_orientation}')
 
@@ -163,7 +166,7 @@ class UKFNode(Node):
                     self.ukf_update(z_w, self.R_yawrate, meas_type='angular_velocity')
 
     def imu_cb(self, msg: Imu):
-        """IMU callback"""
+        """IMU callback with enhanced diagnostics for real robot"""
         # Calculate yaw from quaternion
         yaw = self.quat_to_yaw(msg.orientation)
         
@@ -171,18 +174,42 @@ class UKFNode(Node):
             self.initial_imu_yaw = yaw
             self.imu_initialized = True
             if self.debug_mode:
-                self.get_logger().info(f"IMU initialized with yaw: {yaw:.3f} rad")
+                self.get_logger().info(f"IMU initialized with yaw: {yaw:.3f} rad ({math.degrees(yaw):.1f}°)")
+                # Log raw quaternion for debugging the 54° issue
+                self.get_logger().info(
+                    f"IMU raw quaternion: w={msg.orientation.w:.4f}, "
+                    f"x={msg.orientation.x:.4f}, y={msg.orientation.y:.4f}, z={msg.orientation.z:.4f}"
+                )
+                # Log linear acceleration to verify gravity vector
+                self.get_logger().info(
+                    f"IMU gravity check: ax={msg.linear_acceleration.x:.2f}, "
+                    f"ay={msg.linear_acceleration.y:.2f}, az={msg.linear_acceleration.z:.2f} m/s²"
+                )
         
         # Store current IMU values
-        # Remove startup bias, then apply static frame correction.
+        # Remove startup bias, then apply static frame correction
         self.current_imu_yaw = yaw - self.initial_imu_yaw + self.imu_yaw_offset
+        
+        # Normalize yaw to [-π, π] to prevent angle wrapping issues
+        self.current_imu_yaw = math.atan2(math.sin(self.current_imu_yaw), math.cos(self.current_imu_yaw))
+        
         self.current_imu_wz = msg.angular_velocity.z
+        
+        # Debug: Log yaw transformation (every 100th message to avoid spam)
+        if self.debug_mode and hasattr(self, '_imu_debug_counter'):
+            self._imu_debug_counter += 1
+            if self._imu_debug_counter % 100 == 0:
+                self.get_logger().info(
+                    f"IMU yaw transform: raw={yaw:.3f} → initial={self.initial_imu_yaw:.3f} "
+                    f"→ offset={self.imu_yaw_offset:.3f} → final={self.current_imu_yaw:.3f} rad"
+                )
+        elif self.debug_mode:
+            self._imu_debug_counter = 0
         
         # If initialized, update UKF with IMU angular velocity
         if self.initialized:
             z = np.array([self.current_imu_wz])
-            # Validate before updating
-            z_pred = np.array([self.x[4]])  # Predicted angular velocity
+            z_pred = np.array([self.x[4]])
             if self.validate_measurement(z, z_pred, self.R_yawrate):
                 self.ukf_update(z, self.R_yawrate, meas_type='angular_velocity')
 
