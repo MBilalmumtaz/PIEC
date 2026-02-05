@@ -167,7 +167,7 @@ def generate_launch_description():
         parameters=[{
             **scout_mini_params,
             "odom_topic": "/odometry",
-            "imu_topic": "/imu",  # FIXED: Changed from "/imu" to "/imu"
+            "imu_topic": "/openzen/data",  # OpenZen driver publishes directly to this topic (not /imu)
             "publish_topic": "/ukf/odom",
             
             # CRITICAL NEW PARAMETERS
@@ -179,11 +179,11 @@ def generate_launch_description():
             "wheel_base": 0.313,
             "initial_yaw": 0.0,
             "debug_mode": True,
-            # Tuning parameters
-            "Q_position": 0.01,
-            "Q_orientation": 0.001,
-            "R_imu_orientation": 0.001,
-            "R_odom_position": 0.01,
+            # Tuning parameters - updated for real sensors
+            "Q_position": 0.05,
+            "Q_orientation": 0.01,
+            "R_imu_orientation": 0.005,
+            "R_odom_position": 0.02,
             "R_pose": [0.01, 0.01, 0.005],
             "R_yawrate": [0.001],
             "imu_frame": "imu_link",
