@@ -302,7 +302,7 @@ class ControllerNode(Node):
             'heading_kp': 1.5,  # Proportional gain for heading control
             'heading_deadband_deg': 2.0,  # Deadband for small angle errors (degrees)
             'max_heading_rate': 0.6,  # Maximum angular velocity for heading control (rad/s)
-            'rotate_in_place_angle_deg': 120.0,  # Rotate in place if angle error > this (degrees) - INCREASED to 120° to allow turning while moving for lateral goals
+            'rotate_in_place_angle_deg': 180.0,  # Rotate in place if angle error > this (degrees) - INCREASED to 120° to allow turning while moving for lateral goals
             'rotation_timeout': 5.0,  # Maximum time to spend rotating in place (seconds) - REDUCED from 10s to prevent long spinning
             'close_range_distance': 0.5,  # Distance threshold for close-range proportional control (meters) - INCREASED from 0.3 to allow smoother approach
             
