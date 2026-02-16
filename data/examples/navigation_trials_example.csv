@@ -1,0 +1,3 @@
+trial_id,method,environment,energy_consumed,path_length,mission_time,success,failure_mode,clearance_min,clearance_avg,num_replans,num_near_misses,timestamp
+sim_PIEC_1,PIEC,corridor,142.3,40.2,87.3,True,,0.68,1.23,5,2,2024-01-01T10:00:00
+sim_PIEC_2,PIEC,corridor,138.7,39.8,85.1,True,,0.72,1.19,4,1,2024-01-01T10:05:00

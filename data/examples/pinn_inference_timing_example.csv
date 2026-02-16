@@ -1,0 +1,4 @@
+batch_size,avg_time_ms,per_sample_us,throughput_samples_per_sec,num_iterations,device
+1,0.0842,84.20,11876,1000,cpu
+10,0.2134,21.34,46870,1000,cpu
+100,1.2345,12.35,81037,1000,cpu

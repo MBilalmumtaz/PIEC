@@ -1,0 +1,4 @@
+trial_id,timestamp,method,estimated_x,estimated_y,estimated_theta,ground_truth_x,ground_truth_y,ground_truth_theta,covariance_xx,covariance_yy,covariance_tt
+sim_PIEC_1,0.0,UKF,0.0,0.0,0.0,0.0,0.0,0.0,0.01,0.01,0.001
+sim_PIEC_1,0.05,UKF,0.025,0.001,0.002,0.024,0.001,0.002,0.01,0.01,0.001
+sim_PIEC_1,0.10,UKF,0.050,0.002,0.004,0.049,0.002,0.004,0.01,0.01,0.001
