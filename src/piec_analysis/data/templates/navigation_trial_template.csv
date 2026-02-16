@@ -1,0 +1,7 @@
+trial_id,method,environment,energy_consumed,path_length,mission_time,success,failure_mode,clearance_min
+1,PIEC,indoor_corridor,,,,,None,
+2,PIEC,indoor_corridor,,,,,None,
+3,PIEC,indoor_corridor,,,,,None,
+4,ASTAR,indoor_corridor,,,,,None,
+5,ASTAR,indoor_corridor,,,,,None,
+6,ASTAR,indoor_corridor,,,,,None,

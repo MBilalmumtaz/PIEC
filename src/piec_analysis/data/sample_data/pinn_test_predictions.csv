@@ -1,0 +1,10 @@
+actual_energy,predicted_energy,terrain_type,velocity,slope,roughness
+12.34,12.56,concrete,0.5,0.0,0.1
+15.67,15.23,concrete,0.6,0.0,0.1
+18.90,19.12,concrete,0.7,0.0,0.1
+22.45,22.78,carpet,0.5,0.0,0.3
+26.12,25.89,carpet,0.6,0.0,0.3
+29.87,30.23,carpet,0.7,0.0,0.3
+32.56,32.12,grass,0.4,0.0,0.5
+35.89,36.45,grass,0.5,0.0,0.5
+39.23,38.67,grass,0.6,0.0,0.5

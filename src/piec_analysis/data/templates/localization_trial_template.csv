@@ -1,0 +1,2 @@
+timestamp,method,estimated_x,estimated_y,estimated_theta,ground_truth_x,ground_truth_y,ground_truth_theta
+0.0,UKF,0.0,0.0,0.0,0.0,0.0,0.0

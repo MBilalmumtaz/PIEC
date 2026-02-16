@@ -1,0 +1,68 @@
+# Configuration for PIEC Analysis Package
+
+# Plot settings
+plotting:
+  style: nature  # 'nature' for Nature journal standards
+  format: both   # 'pdf', 'png', or 'both'
+  dpi: 300
+  figure_width: 7.2  # inches (183mm for double column)
+  figure_height: 5.4  # inches
+
+# Color scheme
+colors:
+  piec: '#0C5DA5'      # Blue
+  astar: '#FF2C00'     # Red
+  rrt: '#FF9500'       # Orange
+  dwa: '#00B945'       # Green
+  nsga: '#845B97'      # Purple
+  ukf: '#0C5DA5'       # Blue
+  ekf: '#FF9500'       # Orange
+  odom: '#FF2C00'      # Red
+
+# Statistical tests
+statistics:
+  alpha: 0.05  # Significance level
+  bootstrap_resamples: 10000
+  confidence_level: 0.95
+
+# Data file names
+data_files:
+  pinn_training: 'pinn_training_history.csv'
+  pinn_test: 'pinn_test_predictions.csv'
+  navigation_trials: 'navigation_trials.csv'
+  localization: 'localization_timeseries.csv'
+  nsga_evolution: 'nsga_evolution.csv'
+  ablation: 'ablation_results.csv'
+
+# Method names for display
+method_names:
+  piec: 'PIEC'
+  astar: 'A*+PID'
+  rrt: 'RRT*+MPC'
+  dwa: 'DWA-only'
+  nsga: 'NSGA-II-Std'
+  ukf: 'UKF'
+  ekf: 'EKF'
+  odom: 'Odometry-only'
+
+# Environments
+environments:
+  simulation:
+    - indoor_corridor
+    - cluttered_office
+    - outdoor_campus
+  experimental:
+    - corridor
+    - plaza
+    - parking_lot
+
+# Terrain types
+terrain_types:
+  - flat_concrete
+  - carpet
+  - uphill_5deg
+  - downhill_5deg
+  - rough_grass
+  - tile_ood
+  - gravel_ood
+  - sand_ood
