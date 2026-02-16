@@ -1,0 +1,340 @@
+\chapter{Literature Review}
+\label{ch:literature}
+
+This chapter surveys the extensive body of research relevant to the \acrshort{piec} framework, organized into six major areas: path planning for mobile robots, energy-efficient navigation, physics-informed machine learning, multi-objective optimization, localization and sensor fusion, and local obstacle avoidance. For each area, we review seminal work, discuss recent advances, and identify gaps that motivate our contributions.
+
+\section{Path Planning for Mobile Robots}
+\label{sec:lit_path_planning}
+
+Path planning is a fundamental problem in mobile robotics concerned with finding collision-free trajectories from start to goal configurations. We review classical exact methods, sampling-based approaches, and optimization-based techniques.
+
+\subsection{Classical Graph-Based Methods}
+
+\paragraph{A* and Dijkstra's Algorithm}
+The A* algorithm \cite{Hart1968} remains one of the most widely used path planning methods due to its optimality guarantees and computational efficiency. A* searches a graph representation of the configuration space using a heuristic function $h(n)$ to guide the search toward the goal. With an admissible heuristic ($h(n) \leq$ true cost), A* guarantees finding the shortest path. However, A* has several limitations for energy-aware navigation:
+
+\begin{enumerate}
+    \item Requires discretization of continuous space into a grid or graph, introducing artifacts
+    \item Optimizes only for path length (or weighted graph costs), not complex objective functions
+    \item No explicit consideration of vehicle dynamics or energy consumption
+    \item Computationally expensive for high-dimensional state spaces or fine resolutions
+\end{enumerate}
+
+Variants like D* \cite{Stentz1995} and D* Lite \cite{Koenig2002} enable efficient replanning for dynamic environments but inherit the same fundamental limitations.
+
+\paragraph{Visibility Graphs and Voronoi Diagrams}
+Visibility graphs \cite{LozanoPerez1979} connect vertices of obstacle polygons, guaranteeing shortest paths in 2D polygonal environments. Voronoi diagrams \cite{Takahashi1989} maximize clearance from obstacles. While these methods have theoretical elegance, they are limited to specific geometric representations, do not consider robot dynamics or energy, require complete environment knowledge, and struggle with high-dimensional spaces.
+
+\subsection{Sampling-Based Methods}
+
+\paragraph{Rapidly-Exploring Random Trees (RRT)}
+RRT \cite{LaValle2001} revolutionized motion planning by efficiently exploring high-dimensional configuration spaces through random sampling. The algorithm incrementally builds a tree by sampling random configurations and extending toward them from the nearest existing node. RRT is probabilistically complete (as sampling density increases, the probability of finding a path approaches 1), effective in high dimensions, and fast for complex spaces. However, RRT paths are often suboptimal with unnecessary detours and do not optimize energy consumption.
+
+\paragraph{RRT* and Optimal Variants}
+RRT* \cite{Karaman2011} extends RRT with rewiring operations that asymptotically converge to optimal paths. Variants include Informed RRT* \cite{Gammell2014} (focuses sampling in ellipsoidal heuristic regions), Batch Informed Trees (BIT*) \cite{Gammell2015} (unifies sampling and search), and Fast Marching Trees (FMT*) \cite{Janson2015} (lazy collision checking). While RRT* and its variants optimize path length, they generally do not incorporate energy models or multi-objective optimization.
+
+\paragraph{PRM and Variants}
+Probabilistic Roadmaps (PRM) \cite{Kavraki1996} construct a graph by sampling configurations and connecting them with local paths. PRM is particularly effective for multiple-query scenarios. PRM* \cite{Karaman2011} provides asymptotic optimality. However, PRMs face similar challenges in incorporating complex cost functions and vehicle dynamics.
+
+\subsection{Optimization-Based Planning}
+
+\paragraph{Gradient-Based Trajectory Optimization}
+Methods like CHOMP \cite{Ratliff2009} and TrajOpt \cite{Schulman2013} formulate path planning as continuous optimization, minimizing functionals representing smoothness and obstacle cost. These produce smooth, dynamically feasible trajectories and can incorporate complex cost functions, but often converge to local minima and require differentiable costs. STOMP \cite{Kalakrishnan2011} uses stochastic optimization to escape local minima. While these can incorporate energy-related costs, they typically use simplified models.
+
+\paragraph{Mixed-Integer Programming}
+Recent work \cite{Deits2015,Marcucci2017} formulates path planning with obstacle avoidance as mixed-integer convex optimization, providing global optimality guarantees. However, computational cost grows exponentially with problem size, requires polyhedral obstacle representations, and has not been extended to energy optimization.
+
+\subsection{Learning-Based Planning}
+
+\paragraph{Deep Learning for Planning}
+Recent approaches use deep neural networks for end-to-end learning of navigation policies \cite{Pfeiffer2017,Chen2017}. Value Iteration Networks (VIN) \cite{Tamar2016} learn planning computation differentiably. Graph Neural Networks \cite{Sartoretti2019} enable generalization across environments. While promising, these methods typically require extensive training data, lack interpretability, and provide no optimality guarantees.
+
+\paragraph{Reinforcement Learning}
+\acrshort{rl}-based navigation \cite{Tai2017,Long2018} learns policies through interaction with environments. Deep Q-Networks (DQN) and Actor-Critic methods have shown success in simulated environments. However, sim-to-real transfer remains challenging, sample efficiency is low, and reward engineering for energy efficiency is non-trivial.
+
+\section{Energy-Efficient Navigation}
+\label{sec:lit_energy}
+
+Energy-aware navigation is critical for mobile robotics but remains under-explored compared to classical path planning.
+
+\subsection{Energy Models for Mobile Robots}
+
+\paragraph{Analytical Physics-Based Models}
+Early work \cite{Mei2005,Tokekar2014} derived analytical models for wheeled robot energy consumption:
+\begin{equation}
+E = \int_0^T \left( F_{\text{drive}} + F_{\text{resistance}} \right) v(t) \, dt
+\end{equation}
+where forces include rolling resistance, aerodynamic drag, and gravitational components on slopes. These models capture fundamental physics but require detailed vehicle parameters (mass, drag coefficient, motor efficiency curves) that are difficult to obtain accurately.
+
+\paragraph{Simplified Empirical Models}
+Practical implementations often use simplified models \cite{Sun2015}:
+\begin{equation}
+E_{\text{simple}} = k_1 d + k_2 v^2 + k_3 |\omega|
+\end{equation}
+where $d$ is distance, $v$ is linear velocity, and $\omega$ is angular velocity. While computationally efficient, these fail to capture terrain-dependent effects and non-linear dynamics.
+
+\subsection{Energy-Aware Path Planning}
+
+\paragraph{Terrain-Aware Planning}
+Kim et al. \cite{Kim2012} incorporate terrain cost maps into A* planning, assigning higher costs to rough terrain. Jiang et al. \cite{Jiang2017} use Gaussian processes to learn terrain traversability. However, these approaches do not directly model energy consumption.
+
+\paragraph{Velocity Optimization}
+Several works \cite{Suzuki2013,Liu2017} optimize velocity profiles along fixed geometric paths to minimize energy. While effective, these methods do not jointly optimize path geometry and velocity.
+
+\paragraph{Multi-Objective Energy Planning}
+Some recent work \cite{Castillo2019,Wang2020} formulates energy-aware planning as multi-objective optimization. However, these typically use simplified energy models and have not leveraged physics-informed machine learning.
+
+\subsection{Research Gap}
+\textbf{Gap:} Existing energy-aware planners use either computationally expensive high-fidelity physics simulators or overly simplified analytical models. \textit{No prior work has applied \acrshort{pinn} to mobile robot energy prediction, combining data-driven learning with physics constraints for real-time planning.}
+
+\section{Physics-Informed Neural Networks}
+\label{sec:lit_pinn}
+
+\acrfull{pinn} represent a paradigm shift in scientific machine learning, embedding physical laws directly into neural network training.
+
+\subsection{PINN Foundations}
+
+\paragraph{Original Formulation}
+Raissi et al. \cite{Raissi2019} introduced \acrshort{pinn} for solving partial differential equations (PDEs). The key idea is augmenting data-fitting loss with physics-based loss terms derived from governing equations:
+\begin{equation}
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{data}} + \lambda \mathcal{L}_{\text{physics}}
+\end{equation}
+where $\mathcal{L}_{\text{physics}}$ penalizes violations of PDEs:
+\begin{equation}
+\mathcal{L}_{\text{physics}} = \frac{1}{N_p} \sum_{i=1}^{N_p} \left| \mathcal{F}[u](x_i; \theta) \right|^2
+\end{equation}
+and $\mathcal{F}$ is the differential operator representing physical laws.
+
+\paragraph{Advantages of PINNs}
+\begin{itemize}
+    \item \textbf{Data efficiency:} Physics constraints reduce data requirements
+    \item \textbf{Generalization:} Embedded physics improves extrapolation
+    \item \textbf{Interpretability:} Solutions respect known physical laws
+    \item \textbf{Inverse problems:} Can infer unknown parameters from data
+\end{itemize}
+
+\subsection{PINN Applications}
+
+\paragraph{Fluid Dynamics}
+\acrshort{pinn} have been applied to Navier-Stokes equations \cite{Raissi2020}, turbulence modeling \cite{Wang2020pinn}, and aerodynamics \cite{Mao2020}. These demonstrate superior performance over pure data-driven models with limited training data.
+
+\paragraph{Structural Mechanics}
+Applications include solid mechanics \cite{Haghighat2021}, structural health monitoring \cite{Zhang2020}, and material modeling \cite{Liu2021pinn}. \acrshort{pinn} can learn constitutive relationships while respecting conservation laws.
+
+\paragraph{Energy Systems}
+Recent work applies \acrshort{pinn} to battery modeling \cite{Nascimento2021}, thermal systems \cite{Cai2021}, and power grids \cite{Misyris2020}. These show promise for real-time predictions in complex systems.
+
+\subsection{PINNs in Robotics}
+
+\paragraph{Dynamics Learning}
+Lutter et al. \cite{Lutter2019} use \acrshort{pinn} for learning robot dynamics, embedding Lagrangian mechanics. This improves sample efficiency and sim-to-real transfer compared to model-free learning.
+
+\paragraph{Contact Modeling}
+Suh et al. \cite{Suh2022} apply \acrshort{pinn} to learn contact dynamics for manipulation, respecting complementarity constraints. This enables accurate prediction of contact forces.
+
+\subsection{Research Gap}
+\textbf{Gap:} While \acrshort{pinn} have been applied to various physics problems and robot dynamics learning, \textit{their application to energy prediction for mobile robot navigation—integrating terrain properties, obstacle interactions, and stability constraints—remains unexplored.}
+
+\section{Multi-Objective Optimization}
+\label{sec:lit_moo}
+
+Multi-objective optimization is essential when balancing competing objectives like energy, safety, and path quality.
+
+\subsection{Pareto Optimality}
+
+For multiple objectives $f_1, f_2, \ldots, f_m$, a solution $\vect{x}^*$ is Pareto-optimal if there exists no other solution $\vect{x}$ that improves one objective without degrading another:
+\begin{equation}
+\nexists \vect{x} : f_i(\vect{x}) \leq f_i(\vect{x}^*) \, \forall i \text{ and } f_j(\vect{x}) < f_j(\vect{x}^*) \text{ for some } j
+\end{equation}
+
+The set of all Pareto-optimal solutions forms the Pareto front.
+
+\subsection{Evolutionary Multi-Objective Algorithms}
+
+\paragraph{NSGA-II}
+The Non-dominated Sorting Genetic Algorithm II \cite{Deb2002} is the most widely used multi-objective evolutionary algorithm. Key mechanisms include:
+\begin{itemize}
+    \item \textbf{Fast non-dominated sorting:} Ranks solutions into fronts based on dominance
+    \item \textbf{Crowding distance:} Maintains diversity by favoring solutions in sparse regions
+    \item \textbf{Elitism:} Preserves best solutions across generations
+\end{itemize}
+
+\acrshort{nsga} has complexity $O(MN^2)$ for $M$ objectives and $N$ individuals, making it suitable for real-time applications.
+
+\paragraph{NSGA-III and MOEA/D}
+NSGA-III \cite{Deb2014} improves scalability to many objectives ($>$3) using reference points. MOEA/D \cite{Zhang2007} decomposes multi-objective problems into single-objective subproblems. However, \acrshort{nsga} remains most popular for 2-7 objectives.
+
+\subsection{Multi-Objective Path Planning}
+
+\paragraph{Existing Applications}
+Multi-objective optimization has been applied to:
+\begin{itemize}
+    \item \acrshort{ugv} path planning \cite{Ahmed2013} (length, smoothness, safety)
+    \item \acrshort{uav} trajectory optimization \cite{Roberge2018} (distance, altitude, threat exposure)
+    \item Multi-robot coordination \cite{Hao2019} (completion time, energy, communication)
+\end{itemize}
+
+\paragraph{Limitation of Existing Work}
+Most applications use simplified objective functions (e.g., weighted sums of geometric properties). \textit{Integration of learned models (like \acrshort{pinn}) as objectives within multi-objective evolutionary algorithms for robotics is novel.}
+
+\subsection{Research Gap}
+\textbf{Gap:} While multi-objective optimization is established, \textit{combining 7+ objectives including physics-informed energy predictions, uncertainty awareness, and adaptive stuck detection within \acrshort{nsga} for real-time navigation has not been demonstrated.}
+
+\section{Localization and Sensor Fusion}
+\label{sec:lit_localization}
+
+Accurate state estimation is fundamental to autonomous navigation, enabling closed-loop control and uncertainty-aware planning.
+
+\subsection{Kalman Filter Variants}
+
+\paragraph{Extended Kalman Filter (EKF)}
+The \acrshort{ekf} \cite{Welch2006} linearizes non-linear motion and measurement models using first-order Taylor expansion:
+\begin{align}
+\vect{x}_{k+1} &= f(\vect{x}_k, \vect{u}_k) + \vect{w}_k \\
+\vect{z}_k &= h(\vect{x}_k) + \vect{v}_k
+\end{align}
+where $f$ and $h$ are non-linear functions linearized via Jacobians. While computationally efficient, \acrshort{ekf} can diverge with highly non-linear dynamics or poor initialization.
+
+\paragraph{Unscented Kalman Filter (UKF)}
+The \acrshort{ukf} \cite{Julier2004} uses the unscented transform to propagate mean and covariance through non-linearities. Sigma points $\mathcal{X}_i$ are deterministically sampled to capture distribution:
+\begin{equation}
+\mathcal{X} = \left[ \vect{x}, \vect{x} + \sqrt{(n+\lambda)\mat{P}}, \vect{x} - \sqrt{(n+\lambda)\mat{P}} \right]
+\end{equation}
+These are propagated through non-linear functions and recombined statistically. \acrshort{ukf} achieves second-order accuracy (vs. first-order for \acrshort{ekf}) with similar computational cost.
+
+\paragraph{Particle Filters}
+Particle filters \cite{Thrun2005} represent distributions non-parametrically using weighted samples. While capable of multi-modal distributions, they require many particles ($10^3$-$10^4$) for high-dimensional states, making them computationally expensive.
+
+\subsection{Sensor Fusion for Mobile Robots}
+
+\paragraph{IMU-Odometry Fusion}
+Wheel odometry provides accurate short-term motion estimates but suffers from wheel slip and long-term drift. \acrshort{imu} provides complementary information (angular rates, accelerations) but has bias drift. Fusion combines their strengths \cite{Martinelli2014}.
+
+\paragraph{Magnetometer Integration}
+Magnetometers provide absolute heading reference (magnetic north), preventing yaw drift. However, they suffer from hard-iron (constant offsets) and soft-iron (scale/rotation) distortions from ferromagnetic materials \cite{Gebre2013}.
+
+\subsection{Practical Considerations for Real Robots}
+
+\paragraph{Calibration}
+Real-world deployment requires:
+\begin{itemize}
+    \item IMU bias estimation and temperature compensation
+    \item Wheel radius and baseline calibration
+    \item Magnetometer distortion compensation
+    \item Sensor-to-robot coordinate transform
+\end{itemize}
+
+\paragraph{Health Monitoring}
+Long-duration missions require divergence detection:
+\begin{itemize}
+    \item Covariance magnitude monitoring (trace of $\mat{P}$)
+    \item Innovation consistency checking (Mahalanobis distance)
+    \item Automatic filter reset mechanisms
+\end{itemize}
+
+\subsection{Research Gap}
+\textbf{Gap:} While \acrshort{ukf} is well-established in theory, \textit{practical enhancements for real-robot deployment (IMU yaw discontinuity handling, adaptive covariance health monitoring, divergence recovery) are often overlooked in academic literature but critical for reliability.}
+
+\section{Local Obstacle Avoidance}
+\label{sec:lit_obstacle}
+
+Local obstacle avoidance ensures collision-free motion in dynamic environments, complementing global path planning.
+
+\subsection{Dynamic Window Approach (DWA)}
+
+The \acrshort{dwa} \cite{Fox1997} is a widely-used reactive navigation method that selects velocity commands by:
+\begin{enumerate}
+    \item Sampling velocity space $(v, \omega)$ within robot's dynamic constraints
+    \item Simulating forward trajectories for each sample
+    \item Scoring trajectories with objective function:
+    \begin{equation}
+    G(v, \omega) = \alpha \cdot \text{heading}(v,\omega) + \beta \cdot \text{dist}(v,\omega) + \gamma \cdot \text{velocity}(v,\omega)
+    \end{equation}
+    \item Selecting highest-scoring admissible trajectory
+\end{enumerate}
+
+\paragraph{Advantages}
+\begin{itemize}
+    \item Real-time performance (10-50 Hz)
+    \item Guaranteed collision-free within planning horizon
+    \item Naturally handles dynamic obstacles
+    \item Simple to implement and tune
+\end{itemize}
+
+\paragraph{Limitations}
+\begin{itemize}
+    \item Local minima (oscillations near obstacles)
+    \item Short planning horizon limits foresight
+    \item No energy consideration in standard formulation
+    \item Fixed weights require manual tuning
+\end{itemize}
+
+\subsection{Alternative Local Planners}
+
+\paragraph{Trajectory Rollout}
+Similar to \acrshort{dwa} but samples control space rather than velocity space \cite{Gerkey2008}. Provides smoother motion but computationally more expensive.
+
+\paragraph{Model Predictive Control (MPC)}
+\acrshort{mpc} \cite{Kuhne2015} solves finite-horizon optimal control problems. While producing optimal trajectories, \acrshort{mpc} requires solving optimization problems at each timestep, limiting real-time applicability.
+
+\paragraph{Potential Fields}
+Attractive (goal) and repulsive (obstacle) forces guide the robot \cite{Khatib1986}. Computationally efficient but prone to local minima in complex environments.
+
+\subsection{Enhancements to DWA}
+
+\paragraph{Time-Elastic Band (TEB)}
+TEB \cite{Rosmann2013} deforms an initial trajectory to optimize multiple objectives while maintaining feasibility. Combines global path information with local reactivity.
+
+\paragraph{Probabilistic Velocity Obstacles}
+Accounts for uncertainty in obstacle motion predictions \cite{VanDenBerg2011}. Useful for dense dynamic environments but computationally intensive.
+
+\subsection{Research Gap}
+\textbf{Gap:} Standard \acrshort{dwa} does not consider: (1) free-space topology for anti-oscillation, (2) progressive rotation strategies for goal approach, (3) physics-informed energy costs in trajectory scoring. \textit{Integrating these enhancements systematically within \acrshort{dwa} framework is novel.}
+
+\section{Synthesis and Research Gaps}
+\label{sec:lit_gaps}
+
+\subsection{Summary of Literature}
+
+We have reviewed six key areas:
+\begin{enumerate}
+    \item \textbf{Path Planning:} Classical (A*, RRT) and modern (optimization, learning) methods
+    \item \textbf{Energy-Efficient Navigation:} Physics-based models and terrain-aware planning
+    \item \textbf{Physics-Informed Neural Networks:} Foundations and applications in various domains
+    \item \textbf{Multi-Objective Optimization:} Pareto optimality and evolutionary algorithms
+    \item \textbf{Localization:} Kalman filter variants and sensor fusion techniques
+    \item \textbf{Obstacle Avoidance:} \acrshort{dwa} and alternative reactive methods
+\end{enumerate}
+
+\subsection{Key Research Gaps}
+
+Despite extensive prior work, several critical gaps remain:
+
+\begin{enumerate}
+    \item \textbf{PINN for Mobile Robot Energy:} No prior application of physics-informed learning to mobile robot energy prediction with terrain and obstacle awareness
+
+    \item \textbf{Integrated Multi-Objective Framework:} Lack of systems combining 7+ objectives including learned energy models, uncertainty, and adaptive behaviors within evolutionary optimization
+
+    \item \textbf{Practical Localization Enhancements:} Gap between academic \acrshort{ukf} implementations and robust real-robot deployment (calibration, health monitoring, divergence recovery)
+
+    \item \textbf{Enhanced DWA:} Missing systematic integration of free-space awareness, progressive strategies, and energy optimization in local control
+
+    \item \textbf{End-to-End Validation:} Few frameworks demonstrate complete integration with real-world validation achieving quantifiable improvements (20\%+ energy reduction)
+\end{enumerate}
+
+\subsection{Positioning of PIEC Framework}
+
+The \acrshort{piec} framework addresses these gaps by:
+\begin{itemize}
+    \item Pioneering application of \acrshort{pinn} to mobile robot energy prediction
+    \item Integrating learned models within \acrshort{nsga} multi-objective optimization
+    \item Implementing practical \acrshort{ukf} enhancements for real-robot reliability
+    \item Systematically enhancing \acrshort{dwa} with free-space awareness and anti-oscillation
+    \item Demonstrating complete system integration with measurable real-world improvements
+\end{itemize}
+
+The next chapter presents the technical methodology underlying these contributions.
+
+% TODO: Add table comparing PIEC with existing frameworks across dimensions:
+% Method | Energy Model | Multi-Obj | Localization | Real-Robot | Open-Source
+% Will be created as Table 2.1

@@ -1,0 +1,657 @@
+\chapter{Conclusion}
+\label{ch:conclusion}
+
+This dissertation presented the \acrfull{piec} framework, a novel approach to energy-efficient autonomous navigation for mobile robots that integrates \acrfull{pinn} for energy prediction, multi-objective path optimization, and adaptive sensor fusion. This final chapter summarizes the key contributions, demonstrates how the research questions have been answered, discusses limitations, outlines directions for future work, and reflects on the broader impact of this research.
+
+\section{Summary of Contributions}
+\label{sec:summary_contributions}
+
+This dissertation makes five primary contributions to the field of mobile robotics, each validated through extensive simulation and experimental evaluation:
+
+\subsection{Contribution 1: Physics-Informed Neural Network for Energy Prediction}
+
+\paragraph{Innovation}
+We developed a novel \acrshort{pinn} architecture that combines data-driven learning with physical constraints to predict energy consumption for arbitrary robot trajectories across diverse terrains. The \acrshort{pinn} incorporates:
+\begin{itemize}
+    \item Momentum conservation constraints
+    \item Power balance equations
+    \item Terrain-dependent rolling resistance and friction models
+    \item Multi-component energy decomposition (translational, rotational, gravitational, friction)
+\end{itemize}
+
+\paragraph{Quantitative Achievement}
+\begin{itemize}
+    \item Prediction accuracy: MAPE = 4.73\%, R$^2$ = 0.9823 on test data
+    \item Inference speed: 0.34 ms per trajectory (enables real-time optimization)
+    \item Generalization: Maintains reasonable accuracy (MAPE = 7.21\%) on out-of-distribution terrains
+    \item Computational advantage: 3.7$\times$ faster than trajectory simulation while maintaining high fidelity
+\end{itemize}
+
+\paragraph{Significance}
+The \acrshort{pinn} enables accurate, fast energy prediction that bridges the gap between purely data-driven models (which lack physical interpretability) and physics-based simulations (which are computationally prohibitive for online optimization). This contribution is applicable beyond this work to any robotic system requiring real-time energy-aware decision-making.
+
+\subsection{Contribution 2: Multi-Objective Path Optimization Framework}
+
+\paragraph{Innovation}
+We formulated energy-efficient navigation as a multi-objective optimization problem using \acrshort{nsga-ii}, simultaneously minimizing energy consumption and path length while respecting safety constraints. The framework:
+\begin{itemize}
+    \item Generates Pareto-optimal solution sets representing energy-length trade-offs
+    \item Integrates \acrshort{pinn} predictions within the fitness evaluation
+    \item Incorporates collision avoidance and kinodynamic constraints
+    \item Enables runtime solution selection based on mission priorities
+\end{itemize}
+
+\paragraph{Quantitative Achievement}
+\begin{itemize}
+    \item Energy savings: 18.7\% at cost of 15.6\% longer path (extreme Pareto solution)
+    \item Balanced solution: 11.8\% energy savings with only 5.9\% path extension
+    \item Hypervolume indicator: 0.847 $\pm$ 0.063 (7.7\% better than standard NSGA-II)
+    \item Planning time: 87.3 ms average (11.5 Hz replanning rate)
+\end{itemize}
+
+\paragraph{Significance}
+Multi-objective optimization provides flexibility that single-objective approaches cannot match. Different missions (e.g., emergency response vs. routine patrol) have different priority structures, and the Pareto front allows selection of the most appropriate solution without re-planning. This contribution demonstrates the value of treating energy efficiency as a first-class objective alongside traditional metrics.
+
+\subsection{Contribution 3: Adaptive Multi-Sensor Fusion for Robust Localization}
+
+\paragraph{Innovation}
+We implemented an adaptive \acrshort{ukf} that fuses LiDAR, IMU, and wheel odometry with dynamic covariance adjustment based on terrain conditions and motion characteristics. The system:
+\begin{itemize}
+    \item Adaptively weights sensor contributions based on reliability
+    \item Detects and compensates for wheel slip events
+    \item Maintains consistency through unscented transform for nonlinear dynamics
+    \item Provides uncertainty estimates for downstream planning
+\end{itemize}
+
+\paragraph{Quantitative Achievement}
+\begin{itemize}
+    \item Position RMSE: 0.128 m (experimental), meeting $< 0.2$ m target
+    \item Improvement: 14.1\% over \acrshort{ekf}, 85.7\% over odometry-only
+    \item Robustness: 31.3\% RMSE increase on slippery surfaces (vs. 169.7\% for odometry)
+    \item Computational cost: 3.7 ms per update (real-time capable)
+\end{itemize}
+
+\paragraph{Significance}
+Accurate localization is foundational for safe and efficient navigation. The adaptive fusion approach provides robustness to real-world challenges (sensor noise, wheel slip, feature-poor environments) that fixed-weight filters cannot handle. This contribution ensures that energy-optimized paths can be accurately followed in practice.
+
+\subsection{Contribution 4: Integrated Navigation System with Real-Time Performance}
+
+\paragraph{Innovation}
+We developed a complete, integrated navigation architecture that combines:
+\begin{itemize}
+    \item Global planning: Multi-objective path optimization with \acrshort{pinn}-predicted costs
+    \item Local planning: \acrshort{dwa} for reactive obstacle avoidance and velocity control
+    \item State estimation: Adaptive \acrshort{ukf} for robust localization
+    \item Dynamic replanning: Continuous path re-optimization as environment changes
+\end{itemize}
+
+The system architecture follows a hierarchical structure with appropriate time scales (global planning at 11.5 Hz, local control at 135.1 Hz, state estimation at 270.3 Hz).
+
+\paragraph{Quantitative Achievement}
+\begin{itemize}
+    \item Energy reduction: \textbf{21.0\% vs. RRT*+MPC}, \textbf{34.6\% vs. A*+PID} (experimental)
+    \item Success rate: \textbf{98.6\%} (highest among all evaluated methods)
+    \item Collision rate: \textbf{1.4\%} (lowest among all methods)
+    \item Safety margin: 0.68 m average obstacle clearance
+    \item Computational performance: 7.2 Hz end-to-end cycle rate on target hardware
+\end{itemize}
+
+\paragraph{Significance}
+This contribution demonstrates that significant energy efficiency improvements (> 20\%) can be achieved in practice without compromising safety, reliability, or real-time performance. The integrated system advances the state of the art beyond isolated algorithmic improvements to a complete, deployable navigation solution.
+
+\subsection{Contribution 5: Comprehensive Validation and Open-Source Implementation}
+
+\paragraph{Innovation}
+We conducted extensive validation across:
+\begin{itemize}
+    \item 500 simulation trials spanning three diverse environments
+    \item 200 experimental trials on physical hardware in real-world conditions
+    \item Multiple baseline comparisons with rigorous statistical testing
+    \item Ablation studies quantifying component contributions
+    \item Robustness evaluation under adverse conditions (sensor noise, slip, weather)
+\end{itemize}
+
+Additionally, we provide open-source implementation to enable reproducibility and facilitate future research.
+
+\paragraph{Quantitative Achievement}
+\begin{itemize}
+    \item Consistent results: Simulation trends validated in experiments ($< 11$\% difference)
+    \item Statistical significance: All improvements significant at $p < 0.001$ level
+    \item Large effect sizes: Cohen's $d = 1.42$--2.31 for energy comparisons
+    \item Long-duration reliability: 3-hour continuous operation with stable performance
+    \item Multi-day repeatability: CV = 5.4\% for energy consumption across 10 days
+\end{itemize}
+
+\paragraph{Significance}
+Rigorous validation establishes confidence in the results and facilitates adoption by practitioners. Open-source release enables the research community to build upon this work, accelerating progress toward energy-efficient autonomy. This contribution addresses the reproducibility crisis in robotics research by providing complete implementation details and experimental protocols.
+
+\section{Research Questions Answered}
+\label{sec:research_questions_answered}
+
+In Chapter~\ref{ch:introduction}, we posed four research questions. We now demonstrate how each has been definitively answered:
+
+\subsection{RQ1: Energy Prediction with PINNs}
+
+\textit{Can physics-informed neural networks accurately predict energy consumption for mobile robot trajectories across diverse terrains and motion profiles while maintaining computational efficiency for real-time optimization?}
+
+\paragraph{Answer: Yes}
+The experimental results in Chapters~\ref{ch:simulation_results} and~\ref{ch:experimental_results} provide strong affirmative evidence:
+
+\begin{itemize}
+    \item \textbf{Accuracy}: MAPE = 4.73\% across diverse terrains (flat, slopes, various friction coefficients)
+    \item \textbf{Computational efficiency}: 0.34 ms inference time enables evaluation of 100 candidate solutions in 13.1 ms
+    \item \textbf{Real-time capability}: \acrshort{pinn} enables 11.5 Hz global replanning (vs. 2.9 Hz with trajectory simulation)
+    \item \textbf{Generalization}: Maintains MAPE = 7.21\% on unseen terrain types, benefiting from physics constraints
+    \item \textbf{Practical impact}: \acrshort{pinn}-enabled optimization achieves 15.4\% additional energy savings vs. simplified models
+\end{itemize}
+
+The physics-informed constraints provide three critical advantages: (1) improved generalization beyond training data, (2) physically consistent predictions (conserving energy, respecting power limits), and (3) interpretability through explicit encoding of known physical relationships.
+
+\subsection{RQ2: Multi-Objective Optimization}
+
+\textit{How can multi-objective optimization effectively balance energy efficiency with other navigation objectives (path length, time to goal, safety) while maintaining real-time computational performance?}
+
+\paragraph{Answer: Through Pareto Front Exploration with Efficient Fitness Evaluation}
+The multi-objective approach demonstrates clear advantages:
+
+\begin{itemize}
+    \item \textbf{Pareto optimality}: NSGA-II generates diverse, well-distributed solution sets (spacing metric $S = 0.087$)
+    \item \textbf{User flexibility}: Three representative solutions (min-energy, balanced, min-time) span the trade-off space
+    \item \textbf{No energy-safety conflict}: PIEC achieves both lowest energy (211.1 J) and highest safety (0.68 m clearance)
+    \item \textbf{Computational feasibility}: 87.3 ms planning time (enabled by fast \acrshort{pinn} evaluation)
+    \item \textbf{Runtime adaptability}: Select from pre-computed Pareto front without replanning (< 1 ms)
+\end{itemize}
+
+The multi-objective formulation naturally handles competing objectives without requiring manual weight tuning (a major challenge in weighted-sum approaches). Different missions can prioritize different solutions from the same Pareto front, providing flexibility that single-objective methods cannot match.
+
+\subsection{RQ3: Sensor Fusion and Localization}
+
+\textit{What sensor fusion approach provides robust localization across varying terrain conditions and sensor degradation scenarios while meeting real-time constraints?}
+
+\paragraph{Answer: Adaptive Unscented Kalman Filter with Dynamic Covariance Adjustment}
+The adaptive \acrshort{ukf} provides the best balance of accuracy, robustness, and computational efficiency:
+
+\begin{itemize}
+    \item \textbf{Accuracy}: 0.128 m RMSE (experimental), exceeding 0.2 m target by 36\%
+    \item \textbf{Robustness}: 31.3\% RMSE increase on slippery surfaces (vs. 169.7\% for odometry, 61.5\% for \acrshort{ekf})
+    \item \textbf{Computational efficiency}: 3.7 ms per update (vs. 18.7 ms for particle filter with similar accuracy)
+    \item \textbf{Consistency}: 93.7\% of time steps within NEES confidence bounds (vs. 87.4\% for \acrshort{ekf})
+    \item \textbf{Adaptivity}: Automatic weight adjustment during slip events prevents divergence
+\end{itemize}
+
+The unscented transform is critical for handling nonlinear dynamics during aggressive maneuvers (64.4\% RMSE increase for UKF vs. 86.5\% for \acrshort{ekf}). Adaptive covariance adjustment based on terrain and motion characteristics provides robustness that fixed-parameter filters lack.
+
+\subsection{RQ4: End-to-End System Performance}
+
+\textit{Can an integrated system combining these components achieve significant energy efficiency improvements (target: > 20\% reduction) in real-world deployment while maintaining high success rates, safety, and real-time performance?}
+
+\paragraph{Answer: Yes, Exceeding Target in Practice}
+Experimental validation demonstrates substantial, statistically significant improvements:
+
+\begin{itemize}
+    \item \textbf{Energy efficiency}: \textbf{21.0\% reduction} vs. RRT*+MPC (exceeding 20\% target), \textbf{34.6\% reduction} vs. A*+PID
+    \item \textbf{Success rate}: \textbf{98.6\%} (highest among all methods)
+    \item \textbf{Safety}: Lowest collision rate (1.4\%), highest clearance (0.68 m), fewest emergency stops (2.8\%)
+    \item \textbf{Real-time performance}: 7.2 Hz cycle rate on target hardware, 97.8\% deadline compliance
+    \item \textbf{Robustness}: Consistent performance across 3-hour continuous operation, 10 different test days
+    \item \textbf{Statistical significance}: All improvements significant at $p < 0.001$ with very large effect sizes ($d > 1.4$)
+\end{itemize}
+
+The energy efficiency gains translate to practical benefits: 21\% extended battery life (28 minutes additional runtime), enabling longer missions and reduced charging frequency. Critically, these gains are achieved without compromising other performance dimensions—PIEC simultaneously achieves the best energy efficiency, localization accuracy, success rate, and safety margins.
+
+\section{Limitations and Constraints}
+\label{sec:limitations}
+
+While PIEC demonstrates substantial advantages, several limitations constrain its applicability and suggest areas for improvement:
+
+\subsection{Computational Resource Requirements}
+
+\paragraph{Hardware Demands}
+PIEC requires moderate computational resources:
+\begin{itemize}
+    \item Multi-core CPU (minimum 4 cores, 2+ GHz recommended)
+    \item Minimum 4 GB RAM (8+ GB recommended for large environments)
+    \item GPU optional but beneficial for \acrshort{pinn} inference acceleration
+\end{itemize}
+
+\textit{Impact}: Not suitable for severely resource-constrained platforms (e.g., micro-drones, embedded systems with single-core processors $< 500$ MHz). In such cases, simpler reactive approaches (e.g., DWA-only) or reduced-complexity variants of PIEC may be necessary.
+
+\subsection{PINN Training Data and Transfer Learning}
+
+\paragraph{Data Collection Requirements}
+Training the \acrshort{pinn} requires:
+\begin{itemize}
+    \item 50,000+ trajectory samples across diverse terrains and motion profiles
+    \item Accurate energy measurements (current/voltage sensors with $< 2$\% error)
+    \item Calibrated odometry and ground truth position for each sample
+    \item Approximately 20--30 hours of data collection with systematic coverage of operating envelope
+\end{itemize}
+
+\paragraph{Domain Adaptation}
+\acrshort{pinn} trained on one robot platform may not directly transfer to others due to:
+\begin{itemize}
+    \item Different mass, dimensions, and inertial properties
+    \item Motor efficiency curves and drivetrain characteristics
+    \item Wheel-terrain interaction variations (tire material, tread pattern)
+\end{itemize}
+
+\textit{Impact}: Deployment on new platforms requires retraining or transfer learning. We recommend collecting a small dataset (5,000--10,000 samples) on the new platform and fine-tuning the \acrshort{pinn} rather than training from scratch.
+
+\subsection{Parameter Tuning Complexity}
+
+\paragraph{System Parameters Requiring Tuning}
+\begin{itemize}
+    \item NSGA-II: Population size, generation count, crossover/mutation rates (4 parameters)
+    \item DWA: Velocity sampling resolution, time horizon, objective weights (5 parameters)
+    \item UKF: Process noise covariance, measurement noise covariance, initial uncertainty (3 matrices)
+    \item Safety: Minimum obstacle clearance, emergency stop distance, path smoothness weight (3 parameters)
+\end{itemize}
+
+\paragraph{Sensitivity Analysis}
+Some parameters exhibit high sensitivity:
+\begin{itemize}
+    \item NSGA-II population size: 50\% reduction (100 $\rightarrow$ 50) degrades hypervolume by 12.3\%
+    \item DWA clearance weight: 50\% increase improves safety by 8.7\% but increases energy by 6.2\%
+    \item UKF process noise: 2$\times$ increase degrades RMSE by 15.4\%
+\end{itemize}
+
+\textit{Impact}: Initial deployment requires careful tuning, ideally through systematic grid search or Bayesian optimization. We provide default parameters validated on our platform, but optimal values may differ for other robots and environments.
+
+\subsection{Sensor Requirements and Failure Modes}
+
+\paragraph{Required Sensor Suite}
+PIEC assumes availability of:
+\begin{itemize}
+    \item 360° LiDAR or equivalent ranging sensor (minimum 180° field of view)
+    \item IMU with 3-axis gyroscope and accelerometer
+    \item Wheel encoders with $< 1$\% systematic error
+\end{itemize}
+
+\paragraph{Degradation Under Sensor Limitations}
+\begin{itemize}
+    \item Reduced LiDAR field of view (180°): Success rate drops to 94.3\% ($-4.3$\%)
+    \item Low-quality IMU (10$\times$ noise): Position RMSE increases to 0.247 m (+93\%)
+    \item Encoder failure (one wheel): System cannot maintain localization, requires fallback to external localization (GPS, motion capture)
+\end{itemize}
+
+\textit{Impact}: Certain low-cost platforms may lack necessary sensors. Alternative configurations (e.g., vision-based localization, GPS for outdoor) are possible but require system modifications.
+
+\subsection{Environmental Assumptions}
+
+\paragraph{Ground Plane Assumption}
+The current implementation assumes:
+\begin{itemize}
+    \item Planar terrain with local slopes $< 15°$ (robot remains stable)
+    \item Differential-drive kinematics remain valid (no wheel lift-off)
+    \item Rolling without excessive slip (traction $\mu > 0.4$)
+\end{itemize}
+
+\paragraph{Static Map Assumption}
+Global planning uses a static map:
+\begin{itemize}
+    \item Dynamic obstacles handled by local planner (DWA) and replanning
+    \item Frequent large-scale environmental changes require map updates
+    \item Unmapped obstacles may cause path invalidation
+\end{itemize}
+
+\textit{Impact}: PIEC is not suitable for:
+\begin{itemize}
+    \item Highly uneven terrain (large rocks, stairs, extreme slopes $> 15°$)
+    \item Completely unknown environments without prior maps
+    \item Scenarios with frequent, large-scale environmental changes
+\end{itemize}
+
+Extension to 3D terrain and online mapping are important future work directions (Section~\ref{sec:future_work}).
+
+\subsection{Simulation-Reality Gap}
+
+Despite careful calibration, a simulation-reality gap persists:
+\begin{itemize}
+    \item Energy consumption: 10.9\% higher in experiments (unmodeled losses)
+    \item Localization accuracy: 47.1\% higher RMSE in experiments (sensor imperfections)
+    \item Planning time: 8.5\% slower in experiments (OS scheduling, I/O overhead)
+\end{itemize}
+
+\textit{Impact}: Simulation results provide optimistic estimates; experimental validation is essential before deployment. Conservative safety margins and robust tuning help bridge the gap.
+
+\section{Future Work}
+\label{sec:future_work}
+
+This dissertation opens several promising research directions:
+
+\subsection{Online PINN Adaptation and Lifelong Learning}
+
+\paragraph{Motivation}
+The current \acrshort{pinn} is trained offline and remains fixed during deployment. However:
+\begin{itemize}
+    \item Robot characteristics change over time (tire wear, motor degradation, battery aging)
+    \item Encountering novel terrains not represented in training data
+    \item Seasonal variations (snow, ice, mud) alter terrain properties
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item Can the \acrshort{pinn} adapt online based on observed energy consumption vs. predictions?
+    \item How to balance exploration (gathering data in new conditions) vs. exploitation (following energy-optimal paths)?
+    \item What online learning approaches (meta-learning, continual learning, Bayesian updates) are most effective?
+    \item How to ensure stability and safety during adaptation?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{Online fine-tuning}: Incrementally update \acrshort{pinn} weights using recent trajectory data
+    \item \textbf{Ensemble methods}: Maintain multiple \acrshort{pinn} hypotheses, weight by recent prediction accuracy
+    \item \textbf{Uncertainty-aware planning}: Use prediction uncertainty (e.g., from Bayesian \acrshort{pinn}s or ensembles) to bias exploration toward high-uncertainty regions
+    \item \textbf{Experience replay}: Store surprising trajectories (high prediction error) for offline retraining
+\end{itemize}
+
+\paragraph{Expected Impact}
+Online adaptation would enable long-term deployment without manual retraining, automatically handling gradual changes and novel scenarios. This is critical for real-world applications where environmental conditions are non-stationary.
+
+\subsection{Multi-Robot Energy-Efficient Coordination}
+
+\paragraph{Motivation}
+Many applications involve teams of robots (warehouse fleets, search and rescue swarms, agricultural cooperatives). Multi-robot coordination introduces new energy considerations:
+\begin{itemize}
+    \item Load balancing: Distribute tasks to equalize battery levels
+    \item Cooperative path planning: Avoid congestion, share information
+    \item Energy-aware task allocation: Assign energy-intensive tasks to highly-charged robots
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item How to extend PIEC to multi-robot settings while maintaining decentralization?
+    \item What communication protocols efficiently share relevant information (Pareto fronts, energy predictions, localization)?
+    \item How to coordinate path planning to avoid interference while respecting individual energy constraints?
+    \item Can robots learn from each other's experiences to improve energy prediction?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{Distributed PIEC}: Each robot runs PIEC locally, sharing trajectory intentions and energy states
+    \item \textbf{Centralized optimization}: Global coordinator performs multi-robot path optimization using aggregated \acrshort{pinn} predictions
+    \item \textbf{Market-based coordination}: Robots bid on tasks based on energy cost estimates from \acrshort{pinn}
+    \item \textbf{Collaborative learning}: Share \acrshort{pinn} training data across robot fleet for improved prediction
+\end{itemize}
+
+\paragraph{Expected Impact}
+Multi-robot energy-efficient coordination would enable large-scale deployments (e.g., warehouse automation with 100+ robots) where collective energy efficiency directly impacts operational costs and system throughput.
+
+\subsection{3D Navigation and Complex Terrain}
+
+\paragraph{Current Limitation}
+Current PIEC uses 3D LiDAR sensors (Ouster OS1 in simulation, RoboSense Helios-32 F70 in real-world) for environment perception but plans in 2D space (x, y, θ). This is sufficient for planar navigation but does not address full 3D navigation over rough terrain requiring pitch/roll dynamics.
+
+\paragraph{Motivation}
+Many applications require navigating complex 3D environments:
+\begin{itemize}
+    \item Outdoor robotics: Hills, ditches, stairs, ramps
+    \item Disaster response: Rubble, collapsed structures
+    \item Planetary exploration: Craters, rocks, uneven surfaces
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item How to extend the \acrshort{pinn} to 3D terrain with pitch/roll dynamics?
+    \item How to model energy costs of traversing slopes, stairs, and obstacles?
+    \item Can the robot learn when to avoid vs. climb obstacles based on energy cost?
+    \item How to incorporate stability constraints (tip-over prevention) in multi-objective optimization?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{3D PINN}: Extend input features to include terrain slope (pitch/roll), elevation changes, incorporate gravitational potential energy
+    \item \textbf{Traversability learning}: Learn traversability costs jointly with energy costs, enabling informed avoid-vs-climb decisions
+    \item \textbf{Elevation mapping}: Use existing 3D LiDAR data to build local elevation maps for planning
+    \item \textbf{Contact dynamics}: Model wheel-ground contact forces for rough terrain energy prediction
+    \item \textbf{Stability metrics}: Add center of gravity and tip-over angle as objectives or constraints
+\end{itemize}
+
+\paragraph{Expected Impact}
+3D navigation capability would expand PIEC applicability to outdoor and unstructured environments, enabling energy-efficient operation in scenarios where terrain significantly impacts energy consumption (e.g., agricultural robotics on hilly farmland).
+
+\subsection{Heterogeneous Terrains and Terrain Classification}
+
+\paragraph{Motivation}
+Current approach requires a priori knowledge of terrain properties (friction, slope). Real-world environments contain:
+\begin{itemize}
+    \item Unknown terrain types (grass, gravel, mud, snow)
+    \item Spatially varying properties (puddles, patches)
+    \item Temporally varying conditions (wet after rain, icy in winter)
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item Can robots classify terrain type from proprioceptive and exteroceptive sensing?
+    \item How to incorporate terrain uncertainty into energy prediction and planning?
+    \item What sensor modalities are most informative for terrain classification (vibration, acoustic, visual)?
+    \item Can terrain classification and energy prediction be learned jointly?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{Vision-based terrain classification}: Use cameras to classify terrain appearance, map to friction parameters
+    \item \textbf{Proprioceptive classification}: Analyze motor currents, IMU vibrations, slip detection to infer terrain
+    \item \textbf{Joint learning}: End-to-end model from sensor data to energy prediction without explicit terrain classification
+    \item \textbf{Terrain mapping}: Build spatial map of terrain properties, refine through experience
+\end{itemize}
+
+\paragraph{Expected Impact}
+Autonomous terrain classification would enable deployment in completely unknown environments without manual terrain characterization, crucial for exploration and off-road applications.
+
+\subsection{Integration with High-Level Task Planning}
+
+\paragraph{Motivation}
+PIEC optimizes energy for single-goal navigation tasks. Complex missions involve:
+\begin{itemize}
+    \item Multiple waypoints with ordering constraints (e.g., delivery routes)
+    \item Task-dependent objectives (e.g., time-critical vs. routine)
+    \item Charging opportunities (deciding when to recharge)
+    \item Energy-aware task feasibility (can the robot complete the mission on current battery?)
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item How to integrate PIEC with high-level task planners (e.g., temporal logic, behavior trees)?
+    \item Can energy predictions inform task sequencing (visit nearby locations first to save energy)?
+    \item How to decide optimal recharging times balancing energy replenishment vs. task deadlines?
+    \item What abstraction level connects low-level energy-efficient navigation to high-level mission planning?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{Energy-aware task planning}: Use \acrshort{pinn} to estimate task energy costs, incorporate into task scheduler (e.g., traveling salesman with energy constraints)
+    \item \textbf{Hierarchical planning}: Task planner generates waypoints, PIEC optimizes navigation between them, iterate if infeasible
+    \item \textbf{Learned task-navigation coupling}: Meta-learning approach that learns task planning policies conditioned on energy efficiency
+    \item \textbf{Opportunistic recharging}: Plan paths that opportunistically pass near charging stations when battery is low
+\end{itemize}
+
+\paragraph{Expected Impact}
+Integration with task planning would enable energy-efficient operation at the mission level, not just individual navigation segments, maximizing overall productivity per battery charge.
+
+\subsection{Transfer to Other Robotic Platforms}
+
+\paragraph{Motivation}
+This work focused on differential-drive ground robots. Other platforms have different dynamics and energy characteristics:
+\begin{itemize}
+    \item \textbf{Aerial robots (drones)}: Energy dominated by lift, affected by wind, payload
+    \item \textbf{Legged robots}: Complex gaits, terrain-dependent efficiency, high DOF
+    \item \textbf{Aquatic robots}: Hydrodynamic drag, buoyancy, currents
+    \item \textbf{Autonomous vehicles}: Higher speeds, road constraints, traffic interactions
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item What modifications to the \acrshort{pinn} architecture are needed for different platforms?
+    \item Can a single framework handle diverse robot types, or are platform-specific approaches required?
+    \item What physical laws and constraints should be incorporated for each platform type?
+    \item How does the relative importance of energy efficiency vary across platforms?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{Modular PINN design}: Core architecture with platform-specific physics modules (ground, aerial, aquatic, legged)
+    \item \textbf{Platform-specific demonstrations}: Validate PIEC variants on representative platforms (quadrotor, quadruped, ASV, autonomous car)
+    \item \textbf{Multi-fidelity modeling}: Use high-fidelity simulators (e.g., fluid dynamics for aquatic) to generate training data
+    \item \textbf{Sim-to-real transfer}: Techniques to reduce simulation-reality gap for diverse platforms
+\end{itemize}
+
+\paragraph{Expected Impact}
+Successful transfer would establish PIEC as a general framework for energy-efficient autonomy across robotic platforms, broadly impacting the field.
+
+\subsection{Formal Safety Verification and Guarantees}
+
+\paragraph{Motivation}
+Current safety relies on empirical validation (high success rate, low collision rate). Safety-critical applications (medical, human-robot interaction) require:
+\begin{itemize}
+    \item Formal safety guarantees (provable collision avoidance)
+    \item Bounded worst-case performance (maximum localization error, minimum safety margin)
+    \item Verification under uncertainty (sensor noise, model mismatch)
+\end{itemize}
+
+\paragraph{Research Questions}
+\begin{itemize}
+    \item Can PIEC be integrated with formal verification methods (e.g., reachability analysis, barrier certificates)?
+    \item How to certify \acrshort{pinn} predictions with confidence bounds for planning?
+    \item What runtime monitors ensure safety if \acrshort{pinn} predictions are inaccurate?
+    \item Can we provide probabilistic safety guarantees (e.g., $< 10^{-6}$ collision probability)?
+\end{itemize}
+
+\paragraph{Potential Approaches}
+\begin{itemize}
+    \item \textbf{Certified PINN}: Use interval arithmetic or Lipschitz bounds to provide guaranteed prediction bounds
+    \item \textbf{Backup control policies}: Maintain provably-safe backup controller (e.g., hand-crafted) for safety-critical situations
+    \item \textbf{Runtime monitoring}: Continuously verify safety conditions (obstacle clearance, localization confidence), revert to safe mode if violated
+    \item \textbf{Probabilistic safety}: Use chance constraints in optimization to ensure safety with high probability
+\end{itemize}
+
+\paragraph{Expected Impact}
+Formal safety guarantees would enable deployment in high-stakes scenarios (hospitals, eldercare, collaborative manufacturing) where empirical validation is insufficient.
+
+\section{Broader Impact}
+\label{sec:broader_impact}
+
+Beyond specific technical contributions, this research has broader implications for sustainability, economics, and societal benefit.
+
+\subsection{Environmental Sustainability}
+
+\paragraph{Energy Consumption at Scale}
+As autonomous robots proliferate (millions of warehouse robots, delivery robots, service robots), collective energy consumption becomes significant:
+\begin{itemize}
+    \item \textbf{Individual savings}: 21\% energy reduction per robot
+    \item \textbf{Fleet impact}: 1000-robot warehouse saves $\approx$300 MWh/year (equivalent to 27 average US homes)
+    \item \textbf{Carbon footprint}: Depending on electricity grid, 100--200 tons CO$_2$ reduction per 1000 robots annually
+\end{itemize}
+
+\paragraph{Battery Longevity}
+Reduced energy consumption extends battery cycle life:
+\begin{itemize}
+    \item Lower depth of discharge per mission $\rightarrow$ more charge cycles before replacement
+    \item Fewer battery replacements $\rightarrow$ reduced manufacturing impact and e-waste
+    \item Typical Li-ion battery production: 50--200 kg CO$_2$ per kWh capacity
+\end{itemize}
+
+\paragraph{Enabling Renewable Energy}
+Longer battery life and lower energy consumption make solar/battery-powered robots more viable:
+\begin{itemize}
+    \item Agricultural robots operating entirely on solar power
+    \item Extended planetary exploration missions with limited solar availability
+    \item Off-grid deployment in remote or disaster areas
+\end{itemize}
+
+\subsection{Economic Benefits}
+
+\paragraph{Operational Cost Reduction}
+\begin{itemize}
+    \item Direct energy savings: \$0.10--\$0.15 per kWh $\times$ 21\% reduction $\times$ thousands of robots
+    \item Extended uptime: 21\% longer missions $\rightarrow$ more tasks completed per shift
+    \item Reduced maintenance: Smoother paths reduce mechanical wear (bearings, motors, tires)
+    \item Battery cost savings: Extended battery life reduces replacement frequency
+\end{itemize}
+
+\paragraph{Business Case Example}
+For a 1000-robot warehouse operating 24/7:
+\begin{itemize}
+    \item Annual energy savings: \$45,000--\$60,000 (at commercial electricity rates)
+    \item Productivity gain: 21\% longer operational time $\rightarrow$ handle 10--15\% more throughput
+    \item Battery savings: Delayed replacement from 3 years to 3.6 years $\rightarrow$ \$50,000--\$100,000 reduction in annual battery costs
+    \item \textbf{Total annual benefit}: \$100,000--\$175,000 (payback period for implementation: < 1 year)
+\end{itemize}
+
+\subsection{Enabling Long-Duration Autonomy}
+
+\paragraph{Extended Mission Capabilities}
+Energy efficiency enables missions previously infeasible:
+\begin{itemize}
+    \item \textbf{Environmental monitoring}: Robots patrolling conservation areas for days without recharging
+    \item \textbf{Disaster response}: Longer search and rescue operations in areas without power infrastructure
+    \item \textbf{Space exploration}: Mars rovers with extended operational range (critical for sample return missions)
+    \item \textbf{Inspection and maintenance}: Infrastructure inspection robots completing larger routes per deployment
+\end{itemize}
+
+\paragraph{Rural and Remote Applications}
+Energy efficiency particularly benefits applications in areas with limited charging infrastructure:
+\begin{itemize}
+    \item Precision agriculture robots covering large farms
+    \item Wildlife monitoring in remote nature reserves
+    \item Medical supply delivery in developing regions
+    \item Mine inspection robots in underground environments
+\end{itemize}
+
+\subsection{Advancing Autonomous Systems Research}
+
+\paragraph{Methodological Contributions}
+Beyond mobile robots, the PIEC approach provides methodology applicable to:
+\begin{itemize}
+    \item \textbf{Physics-informed learning}: Combining data-driven learning with domain knowledge (applicable to control, prediction, optimization across domains)
+    \item \textbf{Multi-objective reasoning}: Balancing competing objectives without manual weight tuning (applicable to resource allocation, scheduling, planning)
+    \item \textbf{Efficient online optimization}: Fast surrogate models enabling real-time decision-making (applicable to reconfigurable systems, adaptive control)
+\end{itemize}
+
+\paragraph{Open-Source Contribution}
+Releasing implementation as open source:
+\begin{itemize}
+    \item Accelerates research by providing validated baseline
+    \item Enables reproducibility and comparative evaluation
+    \item Facilitates technology transfer to industry
+    \item Supports education (assignments, projects, thesis work)
+\end{itemize}
+
+\subsection{Ethical Considerations}
+
+\paragraph{Job Displacement Concerns}
+More efficient robots may accelerate automation, potentially displacing human workers:
+\begin{itemize}
+    \item \textit{Mitigation}: Focus applications on dangerous, repetitive, or physically demanding tasks (``dull, dirty, dangerous'')
+    \item \textit{Complementary roles}: Emphasize human-robot collaboration rather than replacement
+    \item \textit{Economic opportunity}: Lower operational costs may enable new markets and job creation in robot deployment, maintenance, and oversight
+\end{itemize}
+
+\paragraph{Environmental Justice}
+Benefits of energy efficiency should be equitably distributed:
+\begin{itemize}
+    \item Ensure technology is accessible beyond wealthy corporations
+    \item Consider applications benefiting underserved communities (medical delivery, disaster response)
+    \item Open-source release promotes equitable access
+\end{itemize}
+
+\paragraph{Dual-Use Concerns}
+Energy-efficient autonomy could be applied to military or surveillance applications:
+\begin{itemize}
+    \item Research is published openly (no dual-use restrictions)
+    \item Encourage responsible use through guidelines and norms
+    \item Benefits (environmental monitoring, disaster response, medical applications) outweigh potential misuse
+\end{itemize}
+
+\section{Concluding Remarks}
+\label{sec:concluding_remarks}
+
+This dissertation addressed the critical challenge of energy-efficient autonomous navigation for mobile robots through the development of the \acrfull{piec} framework. By integrating physics-informed neural networks for fast and accurate energy prediction, multi-objective optimization for balancing competing objectives, and adaptive sensor fusion for robust localization, PIEC achieves substantial energy efficiency improvements (21.0--34.6\% reduction vs. state-of-the-art methods) while maintaining high success rates (98.6\%), safety, and real-time performance.
+
+The comprehensive validation spanning 700 total trials across simulation and real-world experiments, rigorous statistical analysis, and open-source implementation establish PIEC as a significant contribution to mobile robotics research. Beyond the immediate technical contributions, this work advances methodological approaches (physics-informed learning, multi-objective reasoning, efficient online optimization) applicable across autonomous systems.
+
+Looking forward, numerous exciting research directions emerge: online adaptation for lifelong learning, multi-robot coordination, 3D navigation, terrain classification, task-level integration, cross-platform transfer, and formal safety verification. As autonomous robots continue to proliferate across applications—from warehouses and farms to disaster response and planetary exploration—energy efficiency will become increasingly critical for operational viability, environmental sustainability, and economic feasibility.
+
+This research provides a foundation for the next generation of energy-aware autonomous systems, demonstrating that substantial efficiency gains are achievable in practice without compromising performance. As we transition toward a future with millions of autonomous robots deployed worldwide, frameworks like PIEC will be essential for sustainable, practical, and economically viable robotic autonomy.
+
+The journey toward truly energy-efficient autonomous systems has only begun. May this dissertation serve as a stepping stone for researchers and practitioners advancing the frontiers of intelligent, efficient, and sustainable robotics.

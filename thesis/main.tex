@@ -1,0 +1,181 @@
+\documentclass[12pt,twoside,openright]{report}
+
+% ============================================================================
+% PACKAGES
+% ============================================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=3.5cm,
+    right=2.5cm,
+    top=2.5cm,
+    bottom=2.5cm
+}
+
+% Mathematics
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{mathtools}
+
+% Graphics and figures
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+% Tables
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{array}
+\usepackage{longtable}
+
+% Code listings
+\usepackage{listings}
+\usepackage{xcolor}
+
+% Bibliography
+\usepackage[style=ieee,sorting=none,backend=biber]{biblatex}
+\addbibresource{bibliography.bib}
+
+% Hyperlinks
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{cleveref}
+
+% Headers and footers
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\leftmark}
+\fancyhead[RO]{\rightmark}
+\fancyfoot[C]{\thepage}
+
+% Algorithm
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+% Glossary and acronyms
+\usepackage[acronym,toc]{glossaries}
+\makeglossaries
+
+% Line spacing
+\usepackage{setspace}
+\onehalfspacing
+
+% ============================================================================
+% CUSTOM COMMANDS
+% ============================================================================
+\newcommand{\Real}{\mathbb{R}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\mat}[1]{\mathbf{#1}}
+\newcommand{\transpose}{^\mathrm{T}}
+\newcommand{\diff}[2]{\frac{\partial #1}{\partial #2}}
+
+% Code style
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=8pt,
+    backgroundcolor=\color{gray!5},
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    frame=single,
+    tabsize=4,
+    captionpos=b,
+    breaklines=true,
+    breakatwhitespace=false
+}
+\lstset{style=pythonstyle}
+
+% ============================================================================
+% ACRONYMS
+% ============================================================================
+\newacronym{piec}{PIEC}{Physics-Informed Energy-Conscious}
+\newacronym{pinn}{PINN}{Physics-Informed Neural Network}
+\newacronym{nsga}{NSGA-II}{Non-dominated Sorting Genetic Algorithm II}
+\newacronym{ukf}{UKF}{Unscented Kalman Filter}
+\newacronym{dwa}{DWA}{Dynamic Window Approach}
+\newacronym{ros}{ROS}{Robot Operating System}
+\newacronym{imu}{IMU}{Inertial Measurement Unit}
+\newacronym{lidar}{LiDAR}{Light Detection and Ranging}
+\newacronym{ekf}{EKF}{Extended Kalman Filter}
+\newacronym{rrt}{RRT}{Rapidly-exploring Random Tree}
+\newacronym{prm}{PRM}{Probabilistic Roadmap}
+\newacronym{mpc}{MPC}{Model Predictive Control}
+\newacronym{rl}{RL}{Reinforcement Learning}
+\newacronym{slam}{SLAM}{Simultaneous Localization and Mapping}
+\newacronym{ugv}{UGV}{Unmanned Ground Vehicle}
+
+% ============================================================================
+% TITLE PAGE
+% ============================================================================
+\title{
+    \textbf{Physics-Informed Energy-Conscious Navigation Framework \\
+    for Autonomous Mobile Robots}\\[1cm]
+    \large A Dissertation Presented to the Faculty of the Graduate School\\
+    In Partial Fulfillment of the Requirements for the Degree of\\
+    \textbf{Doctor of Philosophy}
+}
+
+\author{Muhammad Amjad}
+\date{February 2026}
+
+% ============================================================================
+% DOCUMENT
+% ============================================================================
+\begin{document}
+
+% Front matter
+\pagenumbering{roman}
+\maketitle
+
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\input{abstract.tex}
+
+\chapter*{Acknowledgments}
+\addcontentsline{toc}{chapter}{Acknowledgments}
+I would like to express my sincere gratitude to my advisor, committee members, colleagues, and family for their unwavering support throughout this doctoral journey. This work would not have been possible without their guidance, encouragement, and patience.
+
+\tableofcontents
+\listoffigures
+\listoftables
+\printglossary[type=\acronymtype,title=List of Abbreviations]
+
+% Main matter
+\cleardoublepage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{chapters/chapter1_introduction.tex}
+\input{chapters/chapter2_literature.tex}
+\input{chapters/chapter3_methodology.tex}
+\input{chapters/chapter4_implementation.tex}
+\input{chapters/chapter5_simulation_results.tex}
+\input{chapters/chapter6_experimental_results.tex}
+\input{chapters/chapter7_comparison.tex}
+\input{chapters/chapter8_conclusion.tex}
+
+% Bibliography
+\printbibliography[heading=bibintoc]
+
+% Appendices
+\appendix
+\input{appendices/appendix_a_code.tex}
+\input{appendices/appendix_b_params.tex}
+\input{appendices/appendix_c_data.tex}
+
+\end{document}

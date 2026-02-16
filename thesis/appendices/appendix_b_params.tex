@@ -1,0 +1,461 @@
+\chapter{Full Parameter Tables}
+\label{appendix:parameters}
+
+This appendix provides comprehensive parameter specifications for all components of the PIEC system. These tables serve as a complete reference for system replication and experimentation.
+
+\section{PINN Architecture Parameters}
+\label{sec:pinn_params}
+
+Table~\ref{tab:pinn_architecture} details the complete neural network architecture used for physics-informed learning.
+
+\begin{table}[htbp]
+\centering
+\caption{Complete PINN Architecture Parameters}
+\label{tab:pinn_architecture}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{3}{l}{\textit{Network Structure}} \\
+Input Dimension & 6 & [x, y, $\theta$, v, $\omega$, energy] \\
+Hidden Layer 1 & 128 & First hidden layer neurons \\
+Hidden Layer 2 & 128 & Second hidden layer neurons \\
+Hidden Layer 3 & 64 & Third hidden layer neurons \\
+Output Dimension & 3 & [v\_cmd, $\omega$\_cmd, power] \\
+Total Parameters & 25,987 & Trainable weights + biases \\
+\midrule
+\multicolumn{3}{l}{\textit{Activation Functions}} \\
+Hidden Layers & Tanh & Hyperbolic tangent \\
+Output Layer & Linear & No activation \\
+\midrule
+\multicolumn{3}{l}{\textit{Regularization}} \\
+Dropout Rate & 0.1 & Applied after each hidden layer \\
+Batch Normalization & False & Not used \\
+Weight Decay & 0.0001 & L2 regularization coefficient \\
+\midrule
+\multicolumn{3}{l}{\textit{Training Parameters}} \\
+Learning Rate & 0.001 & Adam optimizer initial LR \\
+LR Decay Factor & 0.5 & Multiplicative decay \\
+LR Decay Patience & 10 & Epochs without improvement \\
+Batch Size & 64 & Training batch size \\
+Max Epochs & 500 & Maximum training epochs \\
+Early Stopping & 30 & Patience in epochs \\
+\midrule
+\multicolumn{3}{l}{\textit{Loss Weights}} \\
+Data Loss Weight ($\lambda_{\text{data}}$) & 1.0 & Supervised loss weight \\
+Physics Loss Weight ($\lambda_{\text{phys}}$) & 0.5 & Physics constraint weight \\
+Kinematic Loss Weight & 0.3 & Kinematic constraint weight \\
+Dynamic Loss Weight & 0.2 & Dynamic constraint weight \\
+Energy Loss Weight & 0.1 & Energy conservation weight \\
+\midrule
+\multicolumn{3}{l}{\textit{Physics Parameters}} \\
+Robot Mass (m) & 12.5 kg & Total robot mass \\
+Moment of Inertia (I) & 0.8 kg$\cdot$m$^2$ & Rotational inertia \\
+Wheel Radius (r) & 0.1 m & Wheel radius \\
+Wheel Base (L) & 0.3 m & Distance between wheels \\
+Motor Coefficient ($k_1$) & 0.5 & Linear motion power coeff. \\
+Motor Coefficient ($k_2$) & 0.3 & Rotational power coeff. \\
+Motor Coefficient ($k_3$) & 0.2 & Coupling power coeff. \\
+\midrule
+\multicolumn{3}{l}{\textit{Input/Output Bounds}} \\
+Position Range (x, y) & [-10, 10] m & Position limits \\
+Orientation Range ($\theta$) & [-$\pi$, $\pi$] rad & Angle limits \\
+Linear Velocity (v) & [0, 1.0] m/s & Speed limits \\
+Angular Velocity ($\omega$) & [-1.0, 1.0] rad/s & Turn rate limits \\
+Energy Range & [0, 1000] J & Energy state limits \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{NSGA-II Parameters}
+\label{sec:nsga2_params}
+
+Table~\ref{tab:nsga2_params} provides the complete parameter set for the multi-objective genetic algorithm.
+
+\begin{table}[htbp]
+\centering
+\caption{Complete NSGA-II Algorithm Parameters}
+\label{tab:nsga2_params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{3}{l}{\textit{Population Parameters}} \\
+Population Size & 100 & Number of individuals \\
+Max Generations & 200 & Maximum iterations \\
+Elitism & True & Preserve best solutions \\
+Archive Size & 100 & External archive size \\
+\midrule
+\multicolumn{3}{l}{\textit{Genetic Operators}} \\
+Crossover Type & SBX & Simulated Binary Crossover \\
+Crossover Rate ($p_c$) & 0.9 & Probability of crossover \\
+Crossover Distribution ($\eta_c$) & 20 & SBX distribution index \\
+Mutation Type & Polynomial & Polynomial mutation \\
+Mutation Rate ($p_m$) & 0.1 & Probability per variable \\
+Mutation Distribution ($\eta_m$) & 20 & Mutation distribution index \\
+\midrule
+\multicolumn{3}{l}{\textit{Selection Parameters}} \\
+Selection Type & Tournament & Binary tournament \\
+Tournament Size & 2 & Competitors per tournament \\
+Replacement Strategy & Generational & Full replacement \\
+\midrule
+\multicolumn{3}{l}{\textit{Diversity Parameters}} \\
+Crowding Distance & Enabled & Maintain diversity \\
+Niche Radius & 0.1 & Crowding threshold \\
+Sharing Parameter ($\alpha$) & 1.0 & Fitness sharing exponent \\
+\midrule
+\multicolumn{3}{l}{\textit{Objective Functions}} \\
+Objective 1 & Path Length & Minimize distance (m) \\
+Objective 2 & Energy Cost & Minimize energy (J) \\
+Objective 3 & Path Smoothness & Minimize curvature (rad/m) \\
+Constraint Penalty & 1000 & Violation penalty weight \\
+\midrule
+\multicolumn{3}{l}{\textit{Solution Representation}} \\
+Chromosome Type & Real-valued & Floating-point encoding \\
+Chromosome Length & Variable & Depends on waypoints \\
+Min Waypoints & 5 & Minimum path points \\
+Max Waypoints & 50 & Maximum path points \\
+\midrule
+\multicolumn{3}{l}{\textit{Termination Criteria}} \\
+Max Generations & 200 & Primary stopping criterion \\
+Convergence Tolerance & $10^{-6}$ & Pareto front change threshold \\
+Stagnation Limit & 50 & Generations without improvement \\
+Time Limit & 300 s & Maximum computation time \\
+\midrule
+\multicolumn{3}{l}{\textit{Parallelization}} \\
+Parallel Evaluation & True & Evaluate population in parallel \\
+Number of Threads & 8 & CPU cores utilized \\
+\midrule
+\multicolumn{3}{l}{\textit{Output Parameters}} \\
+Save Frequency & 10 & Save every N generations \\
+Logging Level & INFO & Verbosity level \\
+Save Pareto Front & True & Export final solutions \\
+Save Convergence & True & Export metrics history \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Unscented Kalman Filter Parameters}
+\label{sec:ukf_params}
+
+Tables~\ref{tab:ukf_params} and~\ref{tab:ukf_matrices} specify the UKF configuration and noise covariance matrices.
+
+\begin{table}[htbp]
+\centering
+\caption{UKF Configuration Parameters}
+\label{tab:ukf_params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{3}{l}{\textit{State Space}} \\
+State Dimension ($n_x$) & 5 & [x, y, $\theta$, v, $\omega$] \\
+Measurement Dimension ($n_z$) & 3 & [x, y, $\theta$] \\
+Control Dimension ($n_u$) & 2 & [v\_cmd, $\omega$\_cmd] \\
+\midrule
+\multicolumn{3}{l}{\textit{Sigma Point Parameters}} \\
+Alpha ($\alpha$) & 0.001 & Spread of sigma points \\
+Beta ($\beta$) & 2.0 & Prior knowledge (Gaussian) \\
+Kappa ($\kappa$) & 0.0 & Secondary scaling parameter \\
+Lambda ($\lambda$) & -4.999 & Computed scaling factor \\
+Number of Sigma Points & 11 & $2n_x + 1$ \\
+\midrule
+\multicolumn{3}{l}{\textit{Weight Parameters}} \\
+Mean Weight 0 ($W_0^m$) & -999.0 & Central sigma point weight \\
+Covariance Weight 0 ($W_0^c$) & -997.0 & Central sigma point cov. weight \\
+Mean Weights 1-10 ($W_i^m$) & 0.1 & Peripheral sigma point weights \\
+Covariance Weights 1-10 ($W_i^c$) & 0.1 & Peripheral sigma point cov. weights \\
+\midrule
+\multicolumn{3}{l}{\textit{Time Parameters}} \\
+Time Step ($\Delta t$) & 0.1 s & Update interval \\
+Prediction Horizon & 0.1 s & Single-step prediction \\
+\midrule
+\multicolumn{3}{l}{\textit{Model Parameters}} \\
+Linear Velocity Time Constant ($\tau_v$) & 0.2 s & First-order lag \\
+Angular Velocity Time Const. ($\tau_\omega$) & 0.15 s & First-order lag \\
+\midrule
+\multicolumn{3}{l}{\textit{Initialization}} \\
+Initial State ($\mathbf{x}_0$) & [0, 0, 0, 0, 0]$^T$ & Starting state \\
+Initial Covariance ($\mathbf{P}_0$) & diag([0.1, 0.1, 0.1, 0.1, 0.1]) & Initial uncertainty \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{UKF Noise Covariance Matrices}
+\label{tab:ukf_matrices}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Matrix} & \textbf{Values} \\
+\midrule
+\multicolumn{2}{l}{\textit{Process Noise Covariance ($\mathbf{Q}$)}} \\
+$Q_{xx}$ & 0.01 m$^2$ \\
+$Q_{yy}$ & 0.01 m$^2$ \\
+$Q_{\theta\theta}$ & 0.01 rad$^2$ \\
+$Q_{vv}$ & 0.05 (m/s)$^2$ \\
+$Q_{\omega\omega}$ & 0.05 (rad/s)$^2$ \\
+Off-diagonal elements & 0 \\
+\midrule
+\multicolumn{2}{l}{\textit{Measurement Noise Covariance ($\mathbf{R}$)}} \\
+$R_{xx}$ & 0.1 m$^2$ \\
+$R_{yy}$ & 0.1 m$^2$ \\
+$R_{\theta\theta}$ & 0.05 rad$^2$ \\
+Off-diagonal elements & 0 \\
+\midrule
+\multicolumn{2}{l}{\textit{Initial Covariance ($\mathbf{P}_0$)}} \\
+$P_{0,xx}$ & 0.1 m$^2$ \\
+$P_{0,yy}$ & 0.1 m$^2$ \\
+$P_{0,\theta\theta}$ & 0.1 rad$^2$ \\
+$P_{0,vv}$ & 0.1 (m/s)$^2$ \\
+$P_{0,\omega\omega}$ & 0.1 (rad/s)$^2$ \\
+Off-diagonal elements & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Dynamic Window Approach Parameters}
+\label{sec:dwa_params}
+
+Table~\ref{tab:dwa_params} contains all parameters for the local trajectory planning algorithm.
+
+\begin{table}[htbp]
+\centering
+\caption{Complete DWA Parameters}
+\label{tab:dwa_params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{3}{l}{\textit{Robot Kinematic Limits}} \\
+Max Linear Velocity ($v_{\max}$) & 1.0 m/s & Maximum speed \\
+Min Linear Velocity ($v_{\min}$) & 0.0 m/s & Minimum speed (can stop) \\
+Max Angular Velocity ($\omega_{\max}$) & 1.0 rad/s & Maximum turn rate \\
+Max Linear Acceleration ($a_{\max}$) & 0.5 m/s$^2$ & Maximum acceleration \\
+Max Angular Acceleration ($\alpha_{\max}$) & 1.0 rad/s$^2$ & Maximum angular accel. \\
+\midrule
+\multicolumn{3}{l}{\textit{Trajectory Sampling}} \\
+Velocity Resolution ($\Delta v$) & 0.1 m/s & Linear velocity sampling \\
+Yaw Rate Resolution ($\Delta \omega$) & 0.1 rad/s & Angular velocity sampling \\
+Time Step ($\Delta t$) & 0.1 s & Simulation time step \\
+Prediction Horizon ($T_p$) & 3.0 s & Trajectory prediction time \\
+Number of Time Steps & 30 & Discrete steps per trajectory \\
+Typical Sample Count & $\sim$200 & Approximate trajectories evaluated \\
+\midrule
+\multicolumn{3}{l}{\textit{Scoring Weights}} \\
+Heading Weight ($w_h$) & 1.0 & Goal alignment importance \\
+Distance Weight ($w_d$) & 1.0 & Proximity to goal importance \\
+Velocity Weight ($w_v$) & 0.5 & Speed preference weight \\
+Energy Weight ($w_e$) & 0.3 & Energy efficiency importance \\
+Smoothness Weight ($w_s$) & 0.2 & Trajectory smoothness weight \\
+\midrule
+\multicolumn{3}{l}{\textit{Safety Parameters}} \\
+Robot Radius ($r_{\text{robot}}$) & 0.3 m & Robot footprint radius \\
+Safety Margin & 0.2 m & Additional clearance buffer \\
+Collision Threshold ($d_{\text{safe}}$) & 0.5 m & Min obstacle distance \\
+Obstacle Inflation & 0.1 m & Obstacle radius inflation \\
+\midrule
+\multicolumn{3}{l}{\textit{Energy Model Coefficients}} \\
+Linear Motion Coefficient ($k_1$) & 0.5 & Power $\propto v^2$ coefficient \\
+Rotational Coefficient ($k_2$) & 0.3 & Power $\propto \omega^2$ coefficient \\
+Coupling Coefficient ($k_3$) & 0.2 & Power $\propto v\omega$ coefficient \\
+\midrule
+\multicolumn{3}{l}{\textit{Goal Tolerance}} \\
+Position Tolerance & 0.1 m & Goal reached threshold \\
+Orientation Tolerance & 0.1 rad & Heading alignment tolerance \\
+\midrule
+\multicolumn{3}{l}{\textit{Normalization Constants}} \\
+Max Expected Distance & 10.0 m & Distance normalization \\
+Max Heading Error & $\pi$ rad & Heading normalization \\
+\midrule
+\multicolumn{3}{l}{\textit{Velocity Dynamics}} \\
+Linear Time Constant & 0.5 s & First-order velocity lag \\
+Angular Time Constant & 0.5 s & First-order turn rate lag \\
+\midrule
+\multicolumn{3}{l}{\textit{Computational Parameters}} \\
+Parallel Evaluation & True & Parallelize trajectory scoring \\
+Early Termination & True & Stop on collision detection \\
+Trajectory Caching & False & Cache trajectory segments \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{System Integration Parameters}
+\label{sec:integration_params}
+
+Table~\ref{tab:integration_params} specifies parameters for the complete PIEC system integration.
+
+\begin{table}[htbp]
+\centering
+\caption{System Integration Parameters}
+\label{tab:integration_params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{3}{l}{\textit{Control Loop Timing}} \\
+Main Control Frequency & 10 Hz & Primary control loop rate \\
+PINN Update Rate & 10 Hz & Neural network inference rate \\
+UKF Update Rate & 10 Hz & State estimation rate \\
+DWA Planning Rate & 5 Hz & Local planning frequency \\
+NSGA-II Replan Rate & 0.1 Hz & Global replanning frequency \\
+Sensor Polling Rate & 20 Hz & Sensor data acquisition rate \\
+\midrule
+\multicolumn{3}{l}{\textit{Communication}} \\
+ROS Topic Rate & 10 Hz & ROS message publishing rate \\
+Command Timeout & 0.5 s & Emergency stop timeout \\
+Heartbeat Interval & 1.0 s & System health check interval \\
+\midrule
+\multicolumn{3}{l}{\textit{State Machine}} \\
+Idle State Timeout & 60 s & Timeout before shutdown \\
+Planning Timeout & 5.0 s & Max planning time \\
+Execution Monitor Rate & 10 Hz & Monitor trajectory execution \\
+Recovery Behavior Trigger & 3 & Failed attempts before recovery \\
+\midrule
+\multicolumn{3}{l}{\textit{Path Following}} \\
+Lookahead Distance & 0.5 m & Pure pursuit lookahead \\
+Path Tolerance & 0.2 m & Acceptable deviation \\
+Goal Reached Threshold & 0.1 m & Success criterion \\
+Waypoint Switch Distance & 0.3 m & Next waypoint trigger \\
+\midrule
+\multicolumn{3}{l}{\textit{Emergency Behaviors}} \\
+Emergency Stop Accel. & 2.0 m/s$^2$ & Maximum braking \\
+Collision Avoidance Min Dist. & 0.5 m & Panic stop distance \\
+Stuck Detection Time & 5.0 s & Timeout for stuck condition \\
+Recovery Backup Distance & 0.5 m & Reverse distance on stuck \\
+\midrule
+\multicolumn{3}{l}{\textit{Data Logging}} \\
+Log Frequency & 10 Hz & Data logging rate \\
+Log Buffer Size & 1000 & Number of samples buffered \\
+Save to Disk Interval & 10 s & Disk write frequency \\
+Log Variables & 25 & Number of logged variables \\
+\midrule
+\multicolumn{3}{l}{\textit{Performance Monitoring}} \\
+CPU Usage Threshold & 80\% & Performance warning level \\
+Memory Usage Threshold & 1 GB & Memory warning level \\
+Queue Depth Warning & 100 & Message queue warning \\
+Latency Warning & 100 ms & Acceptable control latency \\
+\midrule
+\multicolumn{3}{l}{\textit{Energy Management}} \\
+Battery Capacity & 10,000 J & Total available energy \\
+Low Battery Threshold & 20\% & Return-to-base trigger \\
+Critical Battery Threshold & 5\% & Emergency shutdown \\
+Energy Update Rate & 1 Hz & Battery monitoring frequency \\
+\midrule
+\multicolumn{3}{l}{\textit{Coordinate Frames}} \\
+World Frame & ``map'' & Global reference frame \\
+Robot Frame & ``base\_link'' & Robot-centric frame \\
+Sensor Frame & ``sensor\_link'' & Sensor mounting frame \\
+\midrule
+\multicolumn{3}{l}{\textit{Units and Conventions}} \\
+Distance Units & meters (m) & SI distance unit \\
+Angular Units & radians (rad) & SI angular unit \\
+Time Units & seconds (s) & SI time unit \\
+Energy Units & joules (J) & SI energy unit \\
+Angle Convention & CCW positive & Right-hand rule \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Experimental Environment Parameters}
+\label{sec:environment_params}
+
+Table~\ref{tab:environment_params} describes the test environment configuration.
+
+\begin{table}[htbp]
+\centering
+\caption{Experimental Environment Configuration}
+\label{tab:environment_params}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Description} \\
+\midrule
+\multicolumn{3}{l}{\textit{Physical Environment}} \\
+Test Area Dimensions & 10 m $\times$ 10 m & Arena size \\
+Floor Type & Smooth concrete & Surface characteristics \\
+Ambient Temperature & 20--25$^\circ$C & Operating temperature range \\
+Lighting Conditions & Indoor, fluorescent & Standard office lighting \\
+\midrule
+\multicolumn{3}{l}{\textit{Obstacle Configuration}} \\
+Static Obstacles & 5--15 & Number per scenario \\
+Obstacle Size Range & 0.2--1.0 m & Diameter range \\
+Obstacle Distribution & Random & Placement strategy \\
+Minimum Spacing & 1.5 m & Between obstacles \\
+\midrule
+\multicolumn{3}{l}{\textit{Test Scenarios}} \\
+Simple Scenario & 5 obstacles & Low complexity \\
+Medium Scenario & 10 obstacles & Medium complexity \\
+Complex Scenario & 15 obstacles & High complexity \\
+Trials per Scenario & 20 & Statistical samples \\
+\midrule
+\multicolumn{3}{l}{\textit{Start/Goal Configuration}} \\
+Start Position & [0, 0] m & Origin \\
+Goal Positions & Various & 5--10 m from start \\
+Initial Orientation & 0 rad & Facing +x axis \\
+Goal Orientation & Not specified & Any orientation acceptable \\
+\midrule
+\multicolumn{3}{l}{\textit{Baseline Comparison Methods}} \\
+Method 1 & A* + PID & Classical approach \\
+Method 2 & RRT* + MPC & Sampling-based approach \\
+Method 3 & DWA only & Reactive approach \\
+Method 4 & PIEC (proposed) & Our method \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Computational Hardware Specifications}
+\label{sec:hardware_params}
+
+Table~\ref{tab:hardware_specs} lists the computational platform specifications.
+
+\begin{table}[htbp]
+\centering
+\caption{Computational Hardware Specifications}
+\label{tab:hardware_specs}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component} & \textbf{Specification} & \textbf{Details} \\
+\midrule
+\multicolumn{3}{l}{\textit{Primary Compute Unit}} \\
+Processor & Intel i7-10750H & 6 cores, 12 threads \\
+Base Clock & 2.6 GHz & Base frequency \\
+Boost Clock & 5.0 GHz & Maximum turbo frequency \\
+Cache & 12 MB & L3 cache \\
+TDP & 45 W & Thermal design power \\
+\midrule
+\multicolumn{3}{l}{\textit{Memory}} \\
+RAM & 16 GB & DDR4-2933 \\
+Storage & 512 GB NVMe SSD & Read: 3500 MB/s \\
+\midrule
+\multicolumn{3}{l}{\textit{GPU (Optional Acceleration)}} \\
+Model & NVIDIA GTX 1650 Ti & Mobile GPU \\
+CUDA Cores & 1024 & Parallel processing units \\
+Memory & 4 GB GDDR6 & GPU memory \\
+Compute Capability & 7.5 & CUDA version \\
+\midrule
+\multicolumn{3}{l}{\textit{Software Environment}} \\
+Operating System & Ubuntu 22.04 LTS & Linux distribution \\
+ROS Version & ROS 2 Humble & Robotics middleware \\
+Python Version & 3.10.12 & Programming language \\
+PyTorch Version & 1.12.0 & Deep learning framework \\
+CUDA Version & 11.3 & GPU acceleration toolkit \\
+\midrule
+\multicolumn{3}{l}{\textit{Performance Metrics}} \\
+PINN Inference Time & 5--8 ms & Single forward pass \\
+UKF Update Time & 2--3 ms & State estimation cycle \\
+DWA Planning Time & 15--25 ms & Local trajectory planning \\
+NSGA-II Iteration & 200--500 ms & One generation \\
+Total Control Latency & 25--40 ms & End-to-end delay \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage

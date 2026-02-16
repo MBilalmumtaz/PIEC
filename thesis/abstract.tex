@@ -1,0 +1,19 @@
+This dissertation presents the \acrfull{piec} Navigation Framework, a novel integrated system for energy-efficient autonomous navigation of mobile robots. The framework addresses fundamental challenges in mobile robotics by combining \acrfull{pinn}, multi-objective path optimization using \acrfull{nsga}, \acrfull{ukf} localization with enhanced sensor fusion, and an adaptive \acrfull{dwa} controller with free-space awareness.
+
+The \acrshort{piec} framework introduces five key innovations:
+
+\textbf{(1) PINN-based Energy Surrogate Model:} A physics-informed neural network that learns terrain-dependent energy consumption patterns while respecting physical constraints, enabling real-time energy prediction with 92\% accuracy. The model incorporates six energy components (kinetic, turning, slope, friction, obstacle, clearance) with physics-constrained loss functions ensuring energy conservation and stability bounds.
+
+\textbf{(2) Multi-Objective Path Optimization:} An \acrshort{nsga} optimizer that simultaneously optimizes seven objectives including path length, curvature, obstacle avoidance, localization uncertainty, deviation from optimal trajectory, \acrshort{pinn}-predicted energy, and stability. Fast non-dominated sorting and crowding distance mechanisms produce Pareto-optimal solution sets, enabling adaptive selection based on mission requirements.
+
+\textbf{(3) Enhanced UKF Localization:} A 5D state estimation system $\vect{x} = [x, y, \theta, v, \omega]\transpose$ fusing wheel odometry, \acrshort{imu}, and magnetometer data with real-robot calibration techniques. The system features adaptive covariance health monitoring with automatic reset on divergence detection, achieving localization \acrshort{rmse} $<$ 0.18m (35\% improvement over \acrshort{ekf}).
+
+\textbf{(4) Adaptive DWA with Free Space Awareness:} An enhanced \acrshort{dwa} controller incorporating free-space scoring, progressive rotation thresholds (120°/90°/60°), and dynamic velocity limits based on obstacle proximity. Anti-infinite-rotation timeout mechanisms and \acrshort{pinn}-optimized velocity control ensure robust obstacle avoidance with minimal oscillation.
+
+\textbf{(5) Complete System Integration:} Successful simulation-to-reality transfer on a Scout Mini \acrshort{ugv} platform with \acrshort{ros} 2 architecture, demonstrating real-time performance and mission success rate of 97\%.
+
+Experimental validation in both simulation (Gazebo with AWS warehouse environment) and real-world deployment demonstrates significant performance improvements over state-of-the-art methods. The \acrshort{piec} framework achieves 20.1\% energy reduction compared to traditional A* path planning (36.1 J/m vs. 45.2 J/m), reduces replanning computation time by 35\% compared to pure \acrshort{nsga} approaches, and maintains robust localization and collision-free navigation in dynamic environments.
+
+The contributions of this work extend beyond mobile robotics, demonstrating how physics-informed machine learning can be effectively integrated with classical optimization and control techniques to create practical autonomous systems. The \acrshort{piec} framework provides a foundation for future research in energy-aware navigation, multi-robot systems, and physics-informed autonomous systems.
+
+\textbf{Keywords:} Physics-Informed Neural Networks, Energy-Efficient Navigation, Multi-Objective Optimization, Sensor Fusion, Mobile Robotics, Autonomous Systems, Path Planning, Unscented Kalman Filter, Dynamic Window Approach

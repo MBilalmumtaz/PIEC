@@ -1,0 +1,1234 @@
+\chapter{Code Snippets}
+\label{appendix:code}
+
+This appendix provides key code snippets from the implementation of the Physics-Informed Neural Network for Energy-efficient Control (PIEC) system. All code is written in Python using PyTorch for neural network components.
+
+\section{PINN Model Forward Pass}
+\label{sec:pinn_forward}
+
+The following code implements the forward pass of the Physics-Informed Neural Network, including the computation of physics-informed loss terms based on the equations of motion.
+
+\begin{lstlisting}[language=Python, caption={PINN Model Forward Pass Implementation}, label={lst:pinn_forward}, numbers=left, numberstyle=\tiny, stepnumber=1, basicstyle=\ttfamily\footnotesize, breaklines=true, frame=single]
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class PINNModel(nn.Module):
+    """
+    Physics-Informed Neural Network for mobile robot dynamics.
+    Incorporates kinematic and dynamic constraints.
+    """
+    def __init__(self, input_dim=6, hidden_dims=[128, 128, 64], 
+                 output_dim=3, dropout_rate=0.1):
+        super(PINNModel, self).__init__()
+        
+        # Build network layers
+        layers = []
+        prev_dim = input_dim
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.Tanh())
+            layers.append(nn.Dropout(dropout_rate))
+            prev_dim = hidden_dim
+        
+        self.hidden_layers = nn.ModuleList(layers)
+        self.output_layer = nn.Linear(prev_dim, output_dim)
+        
+        # Physics parameters
+        self.mass = 12.5  # kg
+        self.inertia = 0.8  # kg*m^2
+        self.wheel_radius = 0.1  # m
+        self.wheel_base = 0.3  # m
+        
+    def forward(self, x, compute_physics_loss=False):
+        """
+        Forward pass through the network.
+        
+        Args:
+            x: Input tensor [batch, input_dim]
+               Format: [x, y, theta, v, omega, energy]
+            compute_physics_loss: Whether to compute physics terms
+            
+        Returns:
+            output: Predicted controls [v_cmd, omega_cmd, power]
+            physics_loss: Physics-informed loss (if requested)
+        """
+        # Extract state variables
+        pos_x = x[:, 0:1]
+        pos_y = x[:, 1:2]
+        theta = x[:, 2:3]
+        v = x[:, 3:4]
+        omega = x[:, 4:5]
+        energy = x[:, 5:6]
+        
+        # Forward through hidden layers
+        h = x
+        for layer in self.hidden_layers:
+            h = layer(h)
+        
+        # Output layer
+        output = self.output_layer(h)
+        v_cmd = output[:, 0:1]
+        omega_cmd = output[:, 1:2]
+        power_pred = output[:, 2:3]
+        
+        if not compute_physics_loss:
+            return output
+        
+        # Compute physics-informed loss terms
+        # Enable gradient computation for physics constraints
+        x_phys = x.clone().requires_grad_(True)
+        
+        # Recompute forward pass for gradient computation
+        h_phys = x_phys
+        for layer in self.hidden_layers:
+            h_phys = layer(h_phys)
+        output_phys = self.output_layer(h_phys)
+        
+        # Extract predicted controls
+        v_cmd_phys = output_phys[:, 0:1]
+        omega_cmd_phys = output_phys[:, 1:2]
+        power_pred_phys = output_phys[:, 2:3]
+        
+        # Compute state derivatives
+        dx_dt = torch.autograd.grad(
+            outputs=output_phys.sum(),
+            inputs=x_phys,
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        
+        # Kinematic constraints (differential drive)
+        v_x = v * torch.cos(theta)
+        v_y = v * torch.sin(theta)
+        
+        kinematic_loss_x = dx_dt[:, 0:1] - v_x
+        kinematic_loss_y = dx_dt[:, 1:2] - v_y
+        kinematic_loss_theta = dx_dt[:, 2:3] - omega
+        
+        # Dynamic constraints (Newton's laws)
+        F_linear = self.mass * (v_cmd_phys - v) / 0.1  # dt = 0.1s
+        tau_angular = self.inertia * (omega_cmd_phys - omega) / 0.1
+        
+        dynamic_loss_v = torch.abs(F_linear) - \
+                        torch.abs(self.mass * dx_dt[:, 3:4])
+        dynamic_loss_omega = torch.abs(tau_angular) - \
+                            torch.abs(self.inertia * dx_dt[:, 4:5])
+        
+        # Energy conservation constraint
+        # Power = F*v + tau*omega
+        power_true = (F_linear * v_cmd_phys + 
+                     tau_angular * omega_cmd_phys)
+        energy_loss = torch.abs(power_pred_phys - power_true)
+        
+        # Combine physics losses
+        physics_loss = (
+            torch.mean(kinematic_loss_x ** 2) +
+            torch.mean(kinematic_loss_y ** 2) +
+            torch.mean(kinematic_loss_theta ** 2) +
+            torch.mean(dynamic_loss_v ** 2) +
+            torch.mean(dynamic_loss_omega ** 2) +
+            torch.mean(energy_loss ** 2)
+        )
+        
+        return output, physics_loss
+    
+    def compute_energy_cost(self, v_cmd, omega_cmd, dt=0.1):
+        """
+        Compute energy cost for given control commands.
+        
+        Args:
+            v_cmd: Linear velocity command
+            omega_cmd: Angular velocity command
+            dt: Time step
+            
+        Returns:
+            energy_cost: Estimated energy consumption
+        """
+        # Motor model: P = k1*v^2 + k2*omega^2 + k3*|v*omega|
+        k1 = 0.5  # Linear motion coefficient
+        k2 = 0.3  # Rotational motion coefficient
+        k3 = 0.2  # Coupling coefficient
+        
+        power = (k1 * v_cmd**2 + 
+                k2 * omega_cmd**2 + 
+                k3 * torch.abs(v_cmd * omega_cmd))
+        energy_cost = power * dt
+        
+        return energy_cost
+\end{lstlisting}
+
+\section{NSGA-II Non-Dominated Sorting}
+\label{sec:nsga2_sorting}
+
+This implementation of the NSGA-II non-dominated sorting algorithm is used for multi-objective path optimization, balancing path length, smoothness, and energy consumption.
+
+\begin{lstlisting}[language=Python, caption={NSGA-II Non-Dominated Sorting Algorithm}, label={lst:nsga2_sorting}, numbers=left, numberstyle=\tiny, stepnumber=1, basicstyle=\ttfamily\footnotesize, breaklines=true, frame=single]
+import numpy as np
+from typing import List, Tuple, Dict
+
+class NSGA2Optimizer:
+    """
+    Non-dominated Sorting Genetic Algorithm II (NSGA-II)
+    for multi-objective path optimization.
+    """
+    def __init__(self, population_size=100, max_generations=200,
+                 crossover_rate=0.9, mutation_rate=0.1,
+                 tournament_size=2):
+        self.population_size = population_size
+        self.max_generations = max_generations
+        self.crossover_rate = crossover_rate
+        self.mutation_rate = mutation_rate
+        self.tournament_size = tournament_size
+        
+    def fast_non_dominated_sort(self, objectives):
+        """
+        Fast non-dominated sorting algorithm.
+        
+        Args:
+            objectives: Array of shape [pop_size, n_objectives]
+                       Each row is the objective values for one solution
+                       
+        Returns:
+            fronts: List of lists, each containing indices of 
+                   solutions in that Pareto front
+        """
+        pop_size = len(objectives)
+        
+        # Initialize domination data structures
+        domination_count = np.zeros(pop_size, dtype=int)
+        dominated_solutions = [[] for _ in range(pop_size)]
+        
+        # Find domination relationships
+        for i in range(pop_size):
+            for j in range(i + 1, pop_size):
+                # Check if i dominates j
+                i_dominates_j = self._dominates(
+                    objectives[i], objectives[j]
+                )
+                # Check if j dominates i
+                j_dominates_i = self._dominates(
+                    objectives[j], objectives[i]
+                )
+                
+                if i_dominates_j:
+                    dominated_solutions[i].append(j)
+                    domination_count[j] += 1
+                elif j_dominates_i:
+                    dominated_solutions[j].append(i)
+                    domination_count[i] += 1
+        
+        # Build fronts
+        fronts = [[]]
+        for i in range(pop_size):
+            if domination_count[i] == 0:
+                fronts[0].append(i)
+        
+        # Generate subsequent fronts
+        current_front = 0
+        while len(fronts[current_front]) > 0:
+            next_front = []
+            for i in fronts[current_front]:
+                for j in dominated_solutions[i]:
+                    domination_count[j] -= 1
+                    if domination_count[j] == 0:
+                        next_front.append(j)
+            
+            current_front += 1
+            fronts.append(next_front)
+        
+        # Remove empty last front
+        if len(fronts[-1]) == 0:
+            fronts.pop()
+        
+        return fronts
+    
+    def _dominates(self, obj1, obj2):
+        """
+        Check if obj1 dominates obj2 (minimization).
+        
+        Args:
+            obj1: Objective values for solution 1
+            obj2: Objective values for solution 2
+            
+        Returns:
+            True if obj1 dominates obj2
+        """
+        # obj1 dominates obj2 if:
+        # - obj1 is no worse in all objectives
+        # - obj1 is strictly better in at least one objective
+        better_in_all = np.all(obj1 <= obj2)
+        better_in_one = np.any(obj1 < obj2)
+        
+        return better_in_all and better_in_one
+    
+    def calculate_crowding_distance(self, objectives, front_indices):
+        """
+        Calculate crowding distance for solutions in a front.
+        
+        Args:
+            objectives: Array of shape [pop_size, n_objectives]
+            front_indices: Indices of solutions in this front
+            
+        Returns:
+            distances: Crowding distance for each solution in front
+        """
+        n_solutions = len(front_indices)
+        n_objectives = objectives.shape[1]
+        
+        # Initialize distances to 0
+        distances = np.zeros(n_solutions)
+        
+        # Calculate crowding distance for each objective
+        for obj_idx in range(n_objectives):
+            # Sort solutions by this objective
+            obj_values = objectives[front_indices, obj_idx]
+            sorted_indices = np.argsort(obj_values)
+            
+            # Boundary solutions get infinite distance
+            distances[sorted_indices[0]] = np.inf
+            distances[sorted_indices[-1]] = np.inf
+            
+            # Calculate distance for interior solutions
+            obj_range = obj_values[sorted_indices[-1]] - \
+                       obj_values[sorted_indices[0]]
+            
+            if obj_range > 0:
+                for i in range(1, n_solutions - 1):
+                    distances[sorted_indices[i]] += (
+                        (obj_values[sorted_indices[i + 1]] -
+                         obj_values[sorted_indices[i - 1]]) /
+                        obj_range
+                    )
+        
+        return distances
+    
+    def tournament_selection(self, population, objectives, 
+                           fronts, crowding_distances):
+        """
+        Select parents using binary tournament selection.
+        
+        Args:
+            population: List of solution chromosomes
+            objectives: Objective values for all solutions
+            fronts: Pareto fronts from non-dominated sorting
+            crowding_distances: Crowding distances for all solutions
+            
+        Returns:
+            selected: List of selected parent solutions
+        """
+        selected = []
+        pop_size = len(population)
+        
+        # Create front rank mapping
+        front_rank = np.zeros(pop_size, dtype=int)
+        for rank, front in enumerate(fronts):
+            for idx in front:
+                front_rank[idx] = rank
+        
+        # Perform tournament selection
+        for _ in range(pop_size):
+            # Randomly select tournament candidates
+            candidates = np.random.choice(
+                pop_size, 
+                size=self.tournament_size, 
+                replace=False
+            )
+            
+            # Select best candidate based on:
+            # 1. Lower front rank (better)
+            # 2. Higher crowding distance (more diverse)
+            best_idx = candidates[0]
+            for candidate_idx in candidates[1:]:
+                if (front_rank[candidate_idx] < front_rank[best_idx] or
+                    (front_rank[candidate_idx] == front_rank[best_idx] and
+                     crowding_distances[candidate_idx] > 
+                     crowding_distances[best_idx])):
+                    best_idx = candidate_idx
+            
+            selected.append(population[best_idx].copy())
+        
+        return selected
+    
+    def optimize(self, objective_function, bounds, 
+                 n_objectives=3, verbose=True):
+        """
+        Run NSGA-II optimization.
+        
+        Args:
+            objective_function: Function that takes a solution
+                              and returns objective values
+            bounds: List of (min, max) tuples for each variable
+            n_objectives: Number of objectives
+            verbose: Whether to print progress
+            
+        Returns:
+            pareto_front: Final Pareto front solutions
+            pareto_objectives: Objective values for Pareto front
+        """
+        n_vars = len(bounds)
+        
+        # Initialize population randomly
+        population = []
+        for _ in range(self.population_size):
+            individual = np.array([
+                np.random.uniform(bounds[i][0], bounds[i][1])
+                for i in range(n_vars)
+            ])
+            population.append(individual)
+        
+        # Evolution loop
+        for generation in range(self.max_generations):
+            # Evaluate objectives
+            objectives = np.array([
+                objective_function(ind) 
+                for ind in population
+            ])
+            
+            # Non-dominated sorting
+            fronts = self.fast_non_dominated_sort(objectives)
+            
+            # Calculate crowding distances for all fronts
+            all_distances = np.zeros(self.population_size)
+            for front in fronts:
+                if len(front) > 0:
+                    distances = self.calculate_crowding_distance(
+                        objectives, front
+                    )
+                    all_distances[front] = distances
+            
+            if verbose and generation % 20 == 0:
+                print(f"Generation {generation}: "
+                      f"Pareto front size = {len(fronts[0])}")
+            
+            # Selection
+            parents = self.tournament_selection(
+                population, objectives, fronts, all_distances
+            )
+            
+            # Crossover and mutation
+            offspring = self._create_offspring(parents, bounds)
+            
+            # Combine parent and offspring populations
+            combined_pop = population + offspring
+            combined_obj = np.vstack([
+                objectives,
+                np.array([objective_function(ind) 
+                         for ind in offspring])
+            ])
+            
+            # Select next generation
+            population, objectives = self._select_next_generation(
+                combined_pop, combined_obj
+            )
+        
+        # Return final Pareto front
+        fronts = self.fast_non_dominated_sort(objectives)
+        pareto_indices = fronts[0]
+        pareto_front = [population[i] for i in pareto_indices]
+        pareto_objectives = objectives[pareto_indices]
+        
+        return pareto_front, pareto_objectives
+    
+    def _create_offspring(self, parents, bounds):
+        """Create offspring through crossover and mutation."""
+        offspring = []
+        n_vars = len(bounds)
+        
+        for i in range(0, len(parents), 2):
+            parent1 = parents[i]
+            parent2 = parents[min(i + 1, len(parents) - 1)]
+            
+            # Crossover
+            if np.random.random() < self.crossover_rate:
+                # Simulated binary crossover (SBX)
+                child1, child2 = self._sbx_crossover(
+                    parent1, parent2, bounds
+                )
+            else:
+                child1, child2 = parent1.copy(), parent2.copy()
+            
+            # Mutation
+            if np.random.random() < self.mutation_rate:
+                child1 = self._polynomial_mutation(child1, bounds)
+            if np.random.random() < self.mutation_rate:
+                child2 = self._polynomial_mutation(child2, bounds)
+            
+            offspring.extend([child1, child2])
+        
+        return offspring[:len(parents)]
+    
+    def _sbx_crossover(self, parent1, parent2, bounds, eta=20):
+        """Simulated binary crossover."""
+        child1 = parent1.copy()
+        child2 = parent2.copy()
+        
+        for i in range(len(parent1)):
+            if np.random.random() < 0.5:
+                continue
+            
+            y1 = min(parent1[i], parent2[i])
+            y2 = max(parent1[i], parent2[i])
+            
+            if abs(y2 - y1) < 1e-10:
+                continue
+            
+            beta = 1.0 + (2.0 * (y1 - bounds[i][0]) / (y2 - y1))
+            alpha = 2.0 - beta ** (-(eta + 1.0))
+            
+            u = np.random.random()
+            if u <= 1.0 / alpha:
+                beta_q = (u * alpha) ** (1.0 / (eta + 1.0))
+            else:
+                beta_q = (1.0 / (2.0 - u * alpha)) ** \
+                        (1.0 / (eta + 1.0))
+            
+            child1[i] = 0.5 * ((y1 + y2) - beta_q * (y2 - y1))
+            child2[i] = 0.5 * ((y1 + y2) + beta_q * (y2 - y1))
+            
+            # Ensure bounds
+            child1[i] = np.clip(child1[i], bounds[i][0], bounds[i][1])
+            child2[i] = np.clip(child2[i], bounds[i][0], bounds[i][1])
+        
+        return child1, child2
+    
+    def _polynomial_mutation(self, individual, bounds, eta=20):
+        """Polynomial mutation."""
+        mutated = individual.copy()
+        
+        for i in range(len(individual)):
+            if np.random.random() > self.mutation_rate:
+                continue
+            
+            y = individual[i]
+            delta1 = (y - bounds[i][0]) / (bounds[i][1] - bounds[i][0])
+            delta2 = (bounds[i][1] - y) / (bounds[i][1] - bounds[i][0])
+            
+            u = np.random.random()
+            if u < 0.5:
+                delta_q = (2.0 * u + (1.0 - 2.0 * u) * 
+                          (1.0 - delta1) ** (eta + 1.0)) ** \
+                          (1.0 / (eta + 1.0)) - 1.0
+            else:
+                delta_q = 1.0 - (2.0 * (1.0 - u) + 2.0 * 
+                          (u - 0.5) * (1.0 - delta2) ** \
+                          (eta + 1.0)) ** (1.0 / (eta + 1.0))
+            
+            mutated[i] = y + delta_q * (bounds[i][1] - bounds[i][0])
+            mutated[i] = np.clip(mutated[i], bounds[i][0], bounds[i][1])
+        
+        return mutated
+    
+    def _select_next_generation(self, population, objectives):
+        """Select next generation using elitism."""
+        # Non-dominated sorting
+        fronts = self.fast_non_dominated_sort(objectives)
+        
+        # Select individuals for next generation
+        next_population = []
+        next_objectives = []
+        
+        for front in fronts:
+            if len(next_population) + len(front) <= self.population_size:
+                # Add entire front
+                next_population.extend([population[i] for i in front])
+                next_objectives.extend([objectives[i] for i in front])
+            else:
+                # Add subset based on crowding distance
+                n_remaining = self.population_size - len(next_population)
+                distances = self.calculate_crowding_distance(
+                    objectives, front
+                )
+                sorted_indices = np.argsort(distances)[::-1]
+                selected = [front[i] for i in sorted_indices[:n_remaining]]
+                
+                next_population.extend([population[i] for i in selected])
+                next_objectives.extend([objectives[i] for i in selected])
+                break
+        
+        return next_population, np.array(next_objectives)
+\end{lstlisting}
+
+\section{UKF Sigma Point Generation}
+\label{sec:ukf_sigma}
+
+The Unscented Kalman Filter uses sigma points to capture the mean and covariance of the state distribution through nonlinear transformations.
+
+\begin{lstlisting}[language=Python, caption={UKF Sigma Point Generation and Propagation}, label={lst:ukf_sigma}, numbers=left, numberstyle=\tiny, stepnumber=1, basicstyle=\ttfamily\footnotesize, breaklines=true, frame=single]
+import numpy as np
+from scipy.linalg import sqrtm, cholesky
+
+class UnscentedKalmanFilter:
+    """
+    Unscented Kalman Filter for nonlinear state estimation
+    of mobile robot pose and velocity.
+    """
+    def __init__(self, dim_x, dim_z, dt, alpha=1e-3, 
+                 beta=2.0, kappa=0.0):
+        """
+        Initialize UKF.
+        
+        Args:
+            dim_x: State dimension
+            dim_z: Measurement dimension
+            dt: Time step
+            alpha: Sigma point spread parameter (1e-4 to 1)
+            beta: Prior knowledge parameter (2 is optimal for Gaussian)
+            kappa: Secondary scaling parameter (0 or 3-dim_x)
+        """
+        self.dim_x = dim_x
+        self.dim_z = dim_z
+        self.dt = dt
+        
+        # Sigma point parameters
+        self.alpha = alpha
+        self.beta = beta
+        self.kappa = kappa
+        
+        # Compute lambda and weights
+        self.lambda_ = alpha**2 * (dim_x + kappa) - dim_x
+        
+        # Number of sigma points
+        self.n_sigma = 2 * dim_x + 1
+        
+        # Compute weights
+        self.weights_m = np.zeros(self.n_sigma)
+        self.weights_c = np.zeros(self.n_sigma)
+        
+        self.weights_m[0] = self.lambda_ / (dim_x + self.lambda_)
+        self.weights_c[0] = self.weights_m[0] + (1 - alpha**2 + beta)
+        
+        for i in range(1, self.n_sigma):
+            self.weights_m[i] = 0.5 / (dim_x + self.lambda_)
+            self.weights_c[i] = self.weights_m[i]
+        
+        # State and covariance
+        self.x = np.zeros(dim_x)  # State estimate
+        self.P = np.eye(dim_x)    # Covariance matrix
+        
+        # Process and measurement noise covariances
+        self.Q = np.eye(dim_x) * 0.01  # Process noise
+        self.R = np.eye(dim_z) * 0.1   # Measurement noise
+        
+    def generate_sigma_points(self, x, P):
+        """
+        Generate sigma points around mean x with covariance P.
+        
+        Args:
+            x: Mean state vector [dim_x]
+            P: Covariance matrix [dim_x, dim_x]
+            
+        Returns:
+            sigma_points: Array of sigma points [n_sigma, dim_x]
+        """
+        sigma_points = np.zeros((self.n_sigma, self.dim_x))
+        
+        # First sigma point is the mean
+        sigma_points[0] = x
+        
+        # Compute matrix square root of scaled covariance
+        # (dim_x + lambda) * P
+        U = cholesky((self.dim_x + self.lambda_) * P).T
+        
+        # Generate remaining sigma points
+        for i in range(self.dim_x):
+            sigma_points[i + 1] = x + U[i]
+            sigma_points[i + 1 + self.dim_x] = x - U[i]
+        
+        return sigma_points
+    
+    def unscented_transform(self, sigma_points, weights_m, 
+                          weights_c, noise_cov=None):
+        """
+        Compute mean and covariance from transformed sigma points.
+        
+        Args:
+            sigma_points: Transformed sigma points [n_sigma, dim]
+            weights_m: Weights for mean computation
+            weights_c: Weights for covariance computation
+            noise_cov: Optional noise covariance to add
+            
+        Returns:
+            mean: Weighted mean of sigma points
+            cov: Weighted covariance of sigma points
+        """
+        # Compute weighted mean
+        mean = np.dot(weights_m, sigma_points)
+        
+        # Compute weighted covariance
+        deviations = sigma_points - mean
+        cov = np.dot(weights_c * deviations.T, deviations)
+        
+        # Add noise covariance if provided
+        if noise_cov is not None:
+            cov += noise_cov
+        
+        return mean, cov
+    
+    def predict(self, control_input=None):
+        """
+        Prediction step of UKF.
+        
+        Args:
+            control_input: Control vector [v, omega]
+        """
+        # Generate sigma points from current state
+        sigma_points = self.generate_sigma_points(self.x, self.P)
+        
+        # Propagate sigma points through process model
+        sigma_points_pred = np.zeros_like(sigma_points)
+        for i in range(self.n_sigma):
+            sigma_points_pred[i] = self.process_model(
+                sigma_points[i], 
+                control_input
+            )
+        
+        # Compute predicted mean and covariance
+        self.x, self.P = self.unscented_transform(
+            sigma_points_pred,
+            self.weights_m,
+            self.weights_c,
+            self.Q
+        )
+        
+        # Store sigma points for update step
+        self.sigma_points_pred = sigma_points_pred
+    
+    def update(self, measurement):
+        """
+        Update step of UKF.
+        
+        Args:
+            measurement: Measurement vector [z1, z2, ...]
+        """
+        # Transform sigma points to measurement space
+        sigma_points_meas = np.zeros((self.n_sigma, self.dim_z))
+        for i in range(self.n_sigma):
+            sigma_points_meas[i] = self.measurement_model(
+                self.sigma_points_pred[i]
+            )
+        
+        # Compute predicted measurement mean and covariance
+        z_pred, S = self.unscented_transform(
+            sigma_points_meas,
+            self.weights_m,
+            self.weights_c,
+            self.R
+        )
+        
+        # Compute cross-covariance
+        Pxz = np.zeros((self.dim_x, self.dim_z))
+        for i in range(self.n_sigma):
+            dx = self.sigma_points_pred[i] - self.x
+            dz = sigma_points_meas[i] - z_pred
+            Pxz += self.weights_c[i] * np.outer(dx, dz)
+        
+        # Compute Kalman gain
+        K = np.dot(Pxz, np.linalg.inv(S))
+        
+        # Update state estimate
+        innovation = measurement - z_pred
+        self.x = self.x + np.dot(K, innovation)
+        
+        # Update covariance estimate
+        self.P = self.P - np.dot(K, np.dot(S, K.T))
+        
+        return innovation
+    
+    def process_model(self, x, u):
+        """
+        Nonlinear process model for mobile robot.
+        
+        State: [x, y, theta, v, omega]
+        Control: [v_cmd, omega_cmd]
+        
+        Args:
+            x: State vector
+            u: Control input
+            
+        Returns:
+            x_next: Next state
+        """
+        if u is None:
+            u = np.zeros(2)
+        
+        # Extract state variables
+        pos_x, pos_y, theta, v, omega = x
+        v_cmd, omega_cmd = u
+        
+        # Kinematic model (with velocity dynamics)
+        # Position update
+        x_next = np.zeros_like(x)
+        x_next[0] = pos_x + v * np.cos(theta) * self.dt
+        x_next[1] = pos_y + v * np.sin(theta) * self.dt
+        x_next[2] = theta + omega * self.dt
+        
+        # Velocity dynamics (first-order lag)
+        tau_v = 0.2  # Time constant for linear velocity
+        tau_omega = 0.15  # Time constant for angular velocity
+        
+        x_next[3] = v + (v_cmd - v) / tau_v * self.dt
+        x_next[4] = omega + (omega_cmd - omega) / tau_omega * self.dt
+        
+        # Normalize angle to [-pi, pi]
+        x_next[2] = np.arctan2(np.sin(x_next[2]), np.cos(x_next[2]))
+        
+        return x_next
+    
+    def measurement_model(self, x):
+        """
+        Measurement model (observes position and orientation).
+        
+        Args:
+            x: State vector
+            
+        Returns:
+            z: Measurement vector [x, y, theta]
+        """
+        # Direct observation of position and orientation
+        z = x[:3]  # [x, y, theta]
+        return z
+    
+    def set_process_noise(self, Q):
+        """Set process noise covariance matrix."""
+        self.Q = Q
+    
+    def set_measurement_noise(self, R):
+        """Set measurement noise covariance matrix."""
+        self.R = R
+    
+    def get_state(self):
+        """Get current state estimate."""
+        return self.x.copy()
+    
+    def get_covariance(self):
+        """Get current covariance estimate."""
+        return self.P.copy()
+    
+    def reset(self, x0, P0):
+        """
+        Reset filter with new initial state and covariance.
+        
+        Args:
+            x0: Initial state
+            P0: Initial covariance
+        """
+        self.x = x0.copy()
+        self.P = P0.copy()
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize UKF for 5D state and 3D measurement
+    dim_x = 5  # [x, y, theta, v, omega]
+    dim_z = 3  # [x, y, theta]
+    dt = 0.1
+    
+    ukf = UnscentedKalmanFilter(dim_x, dim_z, dt)
+    
+    # Set initial state
+    x0 = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
+    P0 = np.eye(dim_x) * 0.1
+    ukf.reset(x0, P0)
+    
+    # Set noise covariances
+    Q = np.diag([0.01, 0.01, 0.01, 0.05, 0.05])
+    R = np.diag([0.1, 0.1, 0.05])
+    ukf.set_process_noise(Q)
+    ukf.set_measurement_noise(R)
+    
+    # Simulate prediction and update
+    control = np.array([0.5, 0.1])  # [v_cmd, omega_cmd]
+    measurement = np.array([0.05, 0.005, 0.01])  # [x, y, theta]
+    
+    ukf.predict(control)
+    ukf.update(measurement)
+    
+    print("State estimate:", ukf.get_state())
+    print("Covariance:", ukf.get_covariance())
+\end{lstlisting}
+
+\section{DWA Trajectory Scoring}
+\label{sec:dwa_scoring}
+
+The Dynamic Window Approach generates and scores candidate trajectories for local obstacle avoidance and control.
+
+\begin{lstlisting}[language=Python, caption={DWA Trajectory Generation and Scoring}, label={lst:dwa_scoring}, numbers=left, numberstyle=\tiny, stepnumber=1, basicstyle=\ttfamily\footnotesize, breaklines=true, frame=single]
+import numpy as np
+from typing import Tuple, List
+
+class DynamicWindowApproach:
+    """
+    Dynamic Window Approach for local trajectory planning.
+    Generates and evaluates trajectories within robot's 
+    dynamic constraints.
+    """
+    def __init__(self, config=None):
+        """
+        Initialize DWA planner.
+        
+        Args:
+            config: Configuration dictionary with DWA parameters
+        """
+        if config is None:
+            config = {}
+        
+        # Robot constraints
+        self.max_speed = config.get('max_speed', 1.0)  # m/s
+        self.min_speed = config.get('min_speed', 0.0)
+        self.max_yaw_rate = config.get('max_yaw_rate', 1.0)  # rad/s
+        self.max_accel = config.get('max_accel', 0.5)  # m/s^2
+        self.max_yaw_accel = config.get('max_yaw_accel', 1.0)  # rad/s^2
+        
+        # Trajectory evaluation parameters
+        self.dt = config.get('dt', 0.1)  # Time step
+        self.predict_time = config.get('predict_time', 3.0)  # Prediction horizon
+        self.v_resolution = config.get('v_resolution', 0.1)  # Velocity sampling
+        self.yaw_rate_resolution = config.get('yaw_rate_resolution', 0.1)
+        
+        # Scoring weights
+        self.heading_weight = config.get('heading_weight', 1.0)
+        self.distance_weight = config.get('distance_weight', 1.0)
+        self.velocity_weight = config.get('velocity_weight', 1.0)
+        self.energy_weight = config.get('energy_weight', 0.5)
+        
+        # Safety parameters
+        self.robot_radius = config.get('robot_radius', 0.3)  # m
+        self.collision_threshold = config.get('collision_threshold', 0.5)
+    
+    def plan(self, state, goal, obstacles):
+        """
+        Plan optimal trajectory using DWA.
+        
+        Args:
+            state: Current robot state [x, y, theta, v, omega]
+            goal: Goal position [x, y]
+            obstacles: List of obstacles [[x, y, r], ...]
+            
+        Returns:
+            best_u: Best control [v, omega]
+            best_trajectory: Best predicted trajectory
+        """
+        # Generate dynamic window
+        dw = self.calculate_dynamic_window(state)
+        
+        # Generate all candidate trajectories
+        trajectories, controls = self.generate_trajectories(state, dw)
+        
+        # Score all trajectories
+        scores = self.score_trajectories(
+            trajectories, 
+            controls,
+            goal, 
+            obstacles
+        )
+        
+        # Select best trajectory
+        if len(scores) == 0:
+            # Emergency stop if no valid trajectory
+            return np.array([0.0, 0.0]), np.array([state[:3]])
+        
+        best_idx = np.argmax(scores)
+        best_u = controls[best_idx]
+        best_trajectory = trajectories[best_idx]
+        
+        return best_u, best_trajectory
+    
+    def calculate_dynamic_window(self, state):
+        """
+        Calculate dynamic window based on current velocity and 
+        robot dynamics.
+        
+        Args:
+            state: Current state [x, y, theta, v, omega]
+            
+        Returns:
+            dw: Dynamic window [v_min, v_max, omega_min, omega_max]
+        """
+        x, y, theta, v, omega = state
+        
+        # Velocity limits based on robot constraints
+        v_min = self.min_speed
+        v_max = self.max_speed
+        omega_min = -self.max_yaw_rate
+        omega_max = self.max_yaw_rate
+        
+        # Dynamic window based on acceleration limits
+        v_min_dyn = v - self.max_accel * self.dt
+        v_max_dyn = v + self.max_accel * self.dt
+        omega_min_dyn = omega - self.max_yaw_accel * self.dt
+        omega_max_dyn = omega + self.max_yaw_accel * self.dt
+        
+        # Intersect robot limits with dynamic limits
+        v_min = max(v_min, v_min_dyn)
+        v_max = min(v_max, v_max_dyn)
+        omega_min = max(omega_min, omega_min_dyn)
+        omega_max = min(omega_max, omega_max_dyn)
+        
+        dw = [v_min, v_max, omega_min, omega_max]
+        return dw
+    
+    def generate_trajectories(self, state, dw):
+        """
+        Generate candidate trajectories within dynamic window.
+        
+        Args:
+            state: Current state [x, y, theta, v, omega]
+            dw: Dynamic window [v_min, v_max, omega_min, omega_max]
+            
+        Returns:
+            trajectories: List of trajectories
+            controls: List of control inputs
+        """
+        trajectories = []
+        controls = []
+        
+        # Sample velocities within dynamic window
+        v_samples = np.arange(dw[0], dw[1], self.v_resolution)
+        omega_samples = np.arange(dw[2], dw[3], self.yaw_rate_resolution)
+        
+        # Generate trajectory for each control sample
+        for v in v_samples:
+            for omega in omega_samples:
+                # Simulate trajectory
+                trajectory = self.simulate_trajectory(
+                    state, 
+                    np.array([v, omega])
+                )
+                trajectories.append(trajectory)
+                controls.append(np.array([v, omega]))
+        
+        return trajectories, controls
+    
+    def simulate_trajectory(self, state, control):
+        """
+        Simulate trajectory for given control input.
+        
+        Args:
+            state: Initial state [x, y, theta, v, omega]
+            control: Control input [v, omega]
+            
+        Returns:
+            trajectory: Predicted trajectory points
+        """
+        x, y, theta, v, omega = state
+        v_cmd, omega_cmd = control
+        
+        trajectory = []
+        n_steps = int(self.predict_time / self.dt)
+        
+        for _ in range(n_steps):
+            # Update state with simple kinematic model
+            x += v * np.cos(theta) * self.dt
+            y += v * np.sin(theta) * self.dt
+            theta += omega * self.dt
+            
+            # First-order velocity dynamics
+            v += (v_cmd - v) * 0.5 * self.dt
+            omega += (omega_cmd - omega) * 0.5 * self.dt
+            
+            trajectory.append([x, y, theta])
+        
+        return np.array(trajectory)
+    
+    def score_trajectories(self, trajectories, controls, 
+                          goal, obstacles):
+        """
+        Score all candidate trajectories.
+        
+        Args:
+            trajectories: List of trajectory arrays
+            controls: List of control inputs
+            goal: Goal position [x, y]
+            obstacles: List of obstacles [[x, y, r], ...]
+            
+        Returns:
+            scores: Score for each trajectory
+        """
+        scores = []
+        
+        for trajectory, control in zip(trajectories, controls):
+            # Check collision
+            if self.check_collision(trajectory, obstacles):
+                continue  # Skip colliding trajectories
+            
+            # Compute individual scores
+            heading_score = self.heading_cost(trajectory, goal)
+            distance_score = self.distance_cost(trajectory, goal)
+            velocity_score = self.velocity_cost(control)
+            energy_score = self.energy_cost(control)
+            
+            # Combine scores with weights
+            total_score = (
+                self.heading_weight * heading_score +
+                self.distance_weight * distance_score +
+                self.velocity_weight * velocity_score -
+                self.energy_weight * energy_score
+            )
+            
+            scores.append(total_score)
+        
+        return np.array(scores)
+    
+    def heading_cost(self, trajectory, goal):
+        """
+        Score based on heading toward goal.
+        
+        Args:
+            trajectory: Trajectory points
+            goal: Goal position [x, y]
+            
+        Returns:
+            score: Heading score (higher is better)
+        """
+        # Use final point in trajectory
+        final_point = trajectory[-1]
+        x, y, theta = final_point
+        
+        # Angle to goal
+        angle_to_goal = np.arctan2(goal[1] - y, goal[0] - x)
+        
+        # Angular difference
+        angle_diff = np.abs(self.normalize_angle(angle_to_goal - theta))
+        
+        # Convert to score (0 to 1, where 1 is perfect alignment)
+        score = 1.0 - (angle_diff / np.pi)
+        
+        return score
+    
+    def distance_cost(self, trajectory, goal):
+        """
+        Score based on distance to goal.
+        
+        Args:
+            trajectory: Trajectory points
+            goal: Goal position [x, y]
+            
+        Returns:
+            score: Distance score (higher is better)
+        """
+        # Use final point in trajectory
+        final_point = trajectory[-1]
+        x, y = final_point[:2]
+        
+        # Distance to goal
+        distance = np.hypot(goal[0] - x, goal[1] - y)
+        
+        # Convert to score (normalize and invert)
+        # Closer is better
+        max_distance = 10.0  # Maximum expected distance
+        score = 1.0 - min(distance / max_distance, 1.0)
+        
+        return score
+    
+    def velocity_cost(self, control):
+        """
+        Score based on velocity (prefer higher velocities).
+        
+        Args:
+            control: Control input [v, omega]
+            
+        Returns:
+            score: Velocity score (higher is better)
+        """
+        v, omega = control
+        
+        # Normalize to [0, 1]
+        score = v / self.max_speed
+        
+        return score
+    
+    def energy_cost(self, control):
+        """
+        Estimate energy cost for control input.
+        
+        Args:
+            control: Control input [v, omega]
+            
+        Returns:
+            cost: Energy cost (lower is better)
+        """
+        v, omega = control
+        
+        # Simplified energy model
+        # Energy proportional to v^2 + omega^2
+        k_linear = 0.5
+        k_angular = 0.3
+        
+        energy = k_linear * v**2 + k_angular * omega**2
+        
+        # Normalize to [0, 1]
+        max_energy = (k_linear * self.max_speed**2 + 
+                     k_angular * self.max_yaw_rate**2)
+        cost = energy / max_energy
+        
+        return cost
+    
+    def check_collision(self, trajectory, obstacles):
+        """
+        Check if trajectory collides with any obstacle.
+        
+        Args:
+            trajectory: Trajectory points
+            obstacles: List of obstacles [[x, y, r], ...]
+            
+        Returns:
+            collision: True if collision detected
+        """
+        for point in trajectory:
+            x, y = point[:2]
+            
+            for obstacle in obstacles:
+                obs_x, obs_y, obs_r = obstacle
+                distance = np.hypot(x - obs_x, y - obs_y)
+                
+                # Check if within collision threshold
+                if distance < (self.robot_radius + obs_r + 
+                              self.collision_threshold):
+                    return True
+        
+        return False
+    
+    def normalize_angle(self, angle):
+        """Normalize angle to [-pi, pi]."""
+        while angle > np.pi:
+            angle -= 2.0 * np.pi
+        while angle < -np.pi:
+            angle += 2.0 * np.pi
+        return angle
+
+
+# Example usage
+if __name__ == "__main__":
+    # Configure DWA
+    config = {
+        'max_speed': 1.0,
+        'max_yaw_rate': 1.0,
+        'max_accel': 0.5,
+        'max_yaw_accel': 1.0,
+        'v_resolution': 0.1,
+        'yaw_rate_resolution': 0.1,
+        'dt': 0.1,
+        'predict_time': 3.0,
+        'heading_weight': 1.0,
+        'distance_weight': 1.0,
+        'velocity_weight': 0.5,
+        'energy_weight': 0.3,
+        'robot_radius': 0.3
+    }
+    
+    dwa = DynamicWindowApproach(config)
+    
+    # Test planning
+    state = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
+    goal = np.array([5.0, 5.0])
+    obstacles = [
+        [2.0, 2.0, 0.5],
+        [3.0, 1.0, 0.3]
+    ]
+    
+    control, trajectory = dwa.plan(state, goal, obstacles)
+    print("Optimal control:", control)
+    print("Trajectory shape:", trajectory.shape)
+\end{lstlisting}
+
+\clearpage

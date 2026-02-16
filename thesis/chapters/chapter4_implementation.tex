@@ -1,0 +1,541 @@
+\chapter{Implementation}
+\label{ch:implementation}
+
+This chapter discusses the practical aspects of implementing the \acrshort{piec} framework, including the simulation environment, real robot platform, software architecture, and calibration procedures. We describe the tools, configurations, and methodologies that enable successful deployment in both simulated and real-world scenarios.
+
+\section{Simulation Environment}
+\label{sec:impl_simulation}
+
+\subsection{Gazebo Simulator}
+
+We use Gazebo 11 with \acrshort{ros} 2 Humble for physics-based simulation.
+
+\paragraph{World Configuration}
+The AWS warehouse world provides a realistic indoor environment:
+\begin{itemize}
+    \item Area: 50m $\times$ 40m
+    \item Obstacles: Shelves, boxes, dynamic obstacles (pedestrians, forklifts)
+    \item Terrain: Flat concrete with variable friction coefficients
+    \item Lighting: Realistic indoor illumination
+\end{itemize}
+
+% TODO: Add Figure 4.1 - Gazebo simulation screenshot
+% Show: AWS warehouse world with Scout Mini robot, obstacles, and sensor visualization
+% Reference: Will be created as figures/gazebo_simulation.png
+
+\subsection{Robot Model}
+
+\paragraph{Scout Mini UGV}
+\begin{itemize}
+    \item \textbf{Dimensions:} 0.6m (L) $\times$ 0.45m (W) $\times$ 0.3m (H)
+    \item \textbf{Mass:} 25 kg (simulation), 30 kg (real with sensors)
+    \item \textbf{Drive:} 4-wheel differential drive
+    \item \textbf{Max velocity:} 1.5 m/s (hardware), limited to 1.0 m/s for safety
+    \item \textbf{Max angular velocity:} 1.0 rad/s
+\end{itemize}
+
+\paragraph{URDF Model}
+The Unified Robot Description Format (URDF) specifies:
+\begin{itemize}
+    \item Links: base\_link, wheel\_links (4), sensor\_links
+    \item Joints: wheel joints (continuous), sensor mounts (fixed)
+    \item Inertial properties: Mass, center of mass, moments of inertia
+    \item Collision geometries: Simplified bounding boxes for efficiency
+    \item Visual meshes: High-fidelity STL models
+\end{itemize}
+
+\subsection{Sensor Configuration}
+
+\subsubsection{LiDAR Sensor}
+
+\textbf{Model:} Simulated Ouster OS1-128 (3D LiDAR)
+
+\textbf{Specifications:}
+\begin{itemize}
+    \item Type: 3D Rotating LiDAR
+    \item Channels: 128 (vertical)
+    \item Horizontal FOV: 360°
+    \item Vertical FOV: 45° (±22.5°)
+    \item Range: 0.1m - 120m
+    \item Range accuracy: ±3 cm (typical)
+    \item Angular resolution (horizontal): 0.35° (1024 columns) or 0.70° (512 columns)
+    \item Angular resolution (vertical): 0.35° (128 channels)
+    \item Scan rate: 10 Hz or 20 Hz (configurable)
+    \item Wavelength: 865 nm (near-infrared)
+    \item Built-in IMU: 6-axis (3-axis gyro + 3-axis accel) at 100 Hz
+    \item Noise model: Gaussian $\sigma = 0.03$ m
+    \item Position: Mounted at robot center, height 0.15m
+\end{itemize}
+
+\textbf{Gazebo plugin:} \texttt{libgazebo\_ros\_ray\_sensor.so} (configured for 3D scanning)
+
+\subsubsection{IMU Sensor}
+
+\textbf{Model:} Ouster OS1 Built-in IMU (integrated with LiDAR)
+
+\textbf{Specifications:}
+\begin{itemize}
+    \item Type: 6-axis IMU (3-axis gyroscope + 3-axis accelerometer)
+    \item Update rate: 100 Hz
+    \item Orientation: Quaternion representation
+    \item Angular velocity: 3-axis gyroscope, noise $\sigma = 0.01$ rad/s
+    \item Linear acceleration: 3-axis accelerometer, noise $\sigma = 0.1$ m/s$^2$
+    \item Bias: Gyro bias $0.001$ rad/s, accel bias $0.05$ m/s$^2$
+    \item Integration: Single unit with LiDAR (no separate mounting)
+\end{itemize}
+
+\textbf{Gazebo plugin:} \texttt{libgazebo\_ros\_imu\_sensor.so}
+
+\subsubsection{Wheel Encoders}
+
+\textbf{Odometry Calculation:}
+\begin{equation}
+\begin{aligned}
+v &= \frac{r}{2}(\omega_L + \omega_R) \\
+\omega &= \frac{r}{L}(\omega_R - \omega_L)
+\end{aligned}
+\label{eq:wheel_odometry}
+\end{equation}
+
+where $r = 0.1$ m (wheel radius), $L = 0.45$ m (wheelbase), $\omega_L, \omega_R$ are left/right wheel angular velocities.
+
+\textbf{Noise:} Gaussian noise added: $\sigma_v = 0.02$ m/s, $\sigma_\omega = 0.01$ rad/s
+
+\subsection{Terrain and Obstacle Generation}
+
+\paragraph{Static Obstacles}
+Warehouse shelves, walls, columns defined in SDF (Simulation Description Format).
+
+\paragraph{Dynamic Obstacles}
+\begin{itemize}
+    \item \textbf{Pedestrians:} 5-10 actors following predefined trajectories
+    \item \textbf{Velocity:} 0.5-1.2 m/s
+    \item \textbf{Behavior:} Waypoint-based navigation with collision avoidance
+\end{itemize}
+
+\paragraph{Terrain Variations}
+Different surface friction coefficients:
+\begin{itemize}
+    \item Concrete: $\mu = 0.8$
+    \item Smooth tile: $\mu = 0.6$
+    \item Rough asphalt: $\mu = 0.9$
+\end{itemize}
+
+\section{Real-World Deployment}
+\label{sec:impl_real_robot}
+
+\subsection{Hardware Specifications}
+
+\subsubsection{Scout Mini Platform}
+
+\begin{table}[h]
+\centering
+\caption{Scout Mini Real Robot Specifications}
+\label{tab:scout_mini_specs}
+\begin{tabular}{ll}
+\toprule
+\textbf{Component} & \textbf{Specification} \\
+\midrule
+Manufacturer & AgileX Robotics \\
+Weight & 30 kg (with payload) \\
+Dimensions & 622mm × 490mm × 310mm \\
+Battery & 24V, 15Ah Li-ion \\
+Endurance & 3-4 hours (typical use) \\
+Max speed & 1.5 m/s \\
+Max payload & 20 kg \\
+Drive type & 4WD, differential steering \\
+IP rating & IP54 (dust and splash resistant) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Computing Platform}
+
+\textbf{NVIDIA Jetson AGX Orin}
+\begin{itemize}
+    \item CPU: 12-core ARM Cortex-A78AE
+    \item GPU: 2048-core NVIDIA Ampere with 64 Tensor Cores
+    \item RAM: 32GB LPDDR5
+    \item Storage: 256GB NVMe SSD
+    \item Power: 15W-60W (configurable)
+    \item JetPack version: 6.0 (Ubuntu 22.04, \acrshort{ros} 2 Humble)
+\end{itemize}
+
+\subsubsection{Sensor Suite}
+
+\paragraph{LiDAR}
+\begin{itemize}
+    \item \textbf{Model:} RoboSense Helios-32 F70 (H32F70)
+    \item \textbf{Type:} 3D Rotating LiDAR, 32-channel
+    \item \textbf{Horizontal FOV:} 360°
+    \item \textbf{Vertical FOV:} 40° (-25° to +15°)
+    \item \textbf{Range:} 0.3m - 200m (10\% reflectivity, F70 variant)
+    \item \textbf{Accuracy:} ±2 cm (typical)
+    \item \textbf{Scan rate:} 10 Hz or 20 Hz
+    \item \textbf{Interface:} Ethernet (UDP, 1000BASE-T)
+    \item \textbf{Mounting:} Center of robot, 15cm height
+    \item \textbf{IP Rating:} IP67
+    \item \textbf{Calibration:} Factory calibrated, periodic verification
+\end{itemize}
+
+\paragraph{IMU}
+\begin{itemize}
+    \item \textbf{Model:} LPMS-IG1 CAN
+    \item \textbf{Type:} 9-DOF AHRS (gyro + accel + magnetometer)
+    \item \textbf{Interface:} CAN bus (connected via USB to CPU)
+    \item \textbf{Update rate:} 100 Hz (configurable up to 500 Hz)
+    \item \textbf{Static accuracy (roll/pitch):} 0.3° RMS
+    \item \textbf{Static accuracy (yaw):} 0.8° RMS
+    \item \textbf{Mounting:} Rigidly attached to robot base
+    \item \textbf{Calibration:} Factory calibrated, industrial-grade accuracy
+\end{itemize}
+
+\paragraph{Wheel Encoders}
+\begin{itemize}
+    \item \textbf{Type:} Incremental encoders (built into Scout Mini motors)
+    \item \textbf{Resolution:} 2000 pulses per revolution
+    \item \textbf{Interface:} CAN bus
+    \item \textbf{Calibration:} Wheel radius calibration via measured displacement
+\end{itemize}
+
+\subsection{Communication Architecture}
+
+\begin{itemize}
+    \item \textbf{Onboard:} All computation on Jetson Orin (no off-board processing)
+    \item \textbf{Remote monitoring:} WiFi connection for visualization and logging (optional)
+    \item \textbf{Emergency stop:} Physical E-stop button on robot
+\end{itemize}
+
+\subsection{Power Management}
+
+\begin{itemize}
+    \item \textbf{Robot platform:} Dedicated 24V battery (motors, encoders)
+    \item \textbf{Computing/sensors:} 12V DC-DC converter from main battery
+    \item \textbf{Battery monitoring:} Voltage sensor triggers warning at 23V (20\% capacity)
+    \item \textbf{Low-power mode:} Reduce Jetson power to 15W when stationary
+\end{itemize}
+
+\section{Software Architecture}
+\label{sec:impl_software}
+
+\subsection{ROS 2 Framework}
+
+\acrshort{ros} 2 Humble provides the middleware for distributed computation.
+
+\subsubsection{Package Structure}
+
+\begin{verbatim}
+piec_ws/
+├── src/
+│   ├── piec_bringup/          # Launch files and configs
+│   ├── piec_ukf_localization/ # UKF node
+│   ├── piec_path_optimizer/   # NSGA-II optimizer
+│   ├── piec_pinn_surrogate/   # PINN service
+│   ├── piec_controller/       # DWA controller
+│   ├── piec_dynamics/         # Physics models
+│   ├── piec_validation/       # Testing utilities
+│   └── scout_lidar_imu/       # Hardware drivers
+\end{verbatim}
+
+\subsubsection{Key Message Types}
+
+\begin{itemize}
+    \item \texttt{nav\_msgs/Odometry}: Wheel odometry
+    \item \texttt{sensor\_msgs/Imu}: IMU data
+    \item \texttt{sensor\_msgs/LaserScan}: LiDAR scans
+    \item \texttt{geometry\_msgs/PoseWithCovarianceStamped}: UKF output
+    \item \texttt{nav\_msgs/Path}: Global path from optimizer
+    \item \texttt{geometry\_msgs/Twist}: Velocity commands
+\end{itemize}
+
+\subsubsection{Custom Services}
+
+\textbf{PINN Evaluation Service:}
+\begin{lstlisting}[language=bash, caption=Service definition: EvaluateTrajectory.srv]
+# Request
+float32[] xs         # X positions
+float32[] ys         # Y positions
+float32[] yaws       # Orientations
+float32[] velocities # Linear velocities
+float32[] omegas     # Angular velocities
+---
+# Response
+float32 energy       # Total energy (J)
+float32 stability    # Stability metric [0,1]
+bool success         # Service call success
+string message       # Status/error message
+\end{lstlisting}
+
+\subsection{Node Implementations}
+
+\subsubsection{UKF Localization Node}
+
+\textbf{File:} \texttt{piec\_ukf\_localization/ukf\_node.py}
+
+\textbf{Subscriptions:}
+\begin{itemize}
+    \item \texttt{/odom} (nav\_msgs/Odometry)
+    \item \texttt{/imu/data} (sensor\_msgs/Imu)
+\end{itemize}
+
+\textbf{Publications:}
+\begin{itemize}
+    \item \texttt{/ukf/pose} (geometry\_msgs/PoseWithCovarianceStamped)
+    \item \texttt{/ukf/diagnostics} (diagnostic\_msgs/DiagnosticArray)
+\end{itemize}
+
+\textbf{Update rate:} 20 Hz
+
+\subsubsection{Path Optimizer Node}
+
+\textbf{File:} \texttt{piec\_path\_optimizer/complete\_path\_optimizer.py}
+
+\textbf{Subscriptions:}
+\begin{itemize}
+    \item \texttt{/ukf/pose} (current position)
+    \item \texttt{/goal} (geometry\_msgs/PoseStamped)
+    \item \texttt{/map} (nav\_msgs/OccupancyGrid)
+\end{itemize}
+
+\textbf{Publications:}
+\begin{itemize}
+    \item \texttt{/global\_path} (nav\_msgs/Path)
+    \item \texttt{/pareto\_front\_viz} (visualization\_msgs/MarkerArray)
+\end{itemize}
+
+\textbf{Service clients:}
+\begin{itemize}
+    \item \texttt{/pinn/evaluate\_trajectory}
+\end{itemize}
+
+\textbf{Update rate:} 1 Hz (or on goal change)
+
+\subsubsection{PINN Service Node}
+
+\textbf{File:} \texttt{piec\_pinn\_surrogate/pinn\_service.py}
+
+\textbf{Services provided:}
+\begin{itemize}
+    \item \texttt{/pinn/evaluate\_trajectory}
+\end{itemize}
+
+\textbf{Model loading:} PyTorch model loaded on GPU at startup
+
+\textbf{Inference time:} 3-5ms per query on Jetson Orin GPU
+
+\subsubsection{DWA Controller Node}
+
+\textbf{File:} \texttt{piec\_controller/controller\_node.py}
+
+\textbf{Subscriptions:}
+\begin{itemize}
+    \item \texttt{/ukf/pose}
+    \item \texttt{/global\_path}
+    \item \texttt{/scan}
+\end{itemize}
+
+\textbf{Publications:}
+\begin{itemize}
+    \item \texttt{/cmd\_vel} (geometry\_msgs/Twist)
+    \item \texttt{/local\_trajectories\_viz} (visualization\_msgs/MarkerArray)
+\end{itemize}
+
+\textbf{Update rate:} 20 Hz
+
+\subsection{Launch Files}
+
+\subsubsection{Simulation Launch}
+
+\textbf{File:} \texttt{piec\_complete.launch.py}
+
+\begin{lstlisting}[language=Python, caption=Simulation launch file structure]
+def generate_launch_description():
+    return LaunchDescription([
+        # Gazebo world
+        IncludeLaunchDescription('aws_warehouse.launch.py'),
+        
+        # Robot state publisher
+        Node(package='robot_state_publisher', ...),
+        
+        # Spawn robot in Gazebo
+        Node(package='gazebo_ros', executable='spawn_entity', ...),
+        
+        # Sensor drivers (simulated)
+        Node(package='scout_lidar_imu', executable='lidar_driver', ...),
+        
+        # PIEC nodes
+        Node(package='piec_ukf_localization', executable='ukf_node', ...),
+        Node(package='piec_pinn_surrogate', executable='pinn_service', ...),
+        Node(package='piec_path_optimizer', executable='optimizer_node', ...),
+        Node(package='piec_controller', executable='controller_node', ...),
+        
+        # Visualization
+        Node(package='rviz2', executable='rviz2', arguments=['-d', config]),
+    ])
+\end{lstlisting}
+
+\subsubsection{Real Robot Launch}
+
+\textbf{File:} \texttt{piec\_real\_robot.launch.py}
+
+Differences from simulation:
+\begin{itemize}
+    \item Real hardware drivers for LiDAR (\texttt{robosense\_driver})
+    \item Real IMU driver (\texttt{lpms\_ig1\_driver})
+    \item Scout Mini base driver (\texttt{scout\_base})
+    \item No Gazebo, use actual sensor topics
+    \item Load real-robot calibration parameters from \texttt{config/piec\_real\_robot.yaml}
+\end{itemize}
+
+\section{Calibration and Tuning}
+\label{sec:impl_calibration}
+
+\subsection{Sensor Calibration}
+
+All sensors used in this implementation rely on factory calibration:
+
+\subsubsection{LiDAR Calibration}
+
+\textbf{Simulation (Ouster OS1):}
+\begin{itemize}
+    \item Factory-calibrated intrinsic parameters (beam angles, timing)
+    \item Built-in IMU factory-calibrated for 6-axis measurements
+    \item No manual calibration performed
+\end{itemize}
+
+\textbf{Real-world (RoboSense Helios-32 F70):}
+\begin{itemize}
+    \item Factory-calibrated intrinsic parameters
+    \item Periodic verification recommended but not performed in this work
+    \item Extrinsic calibration (mounting position) measured manually: 15cm height at robot center
+\end{itemize}
+
+\subsubsection{IMU Calibration}
+
+\textbf{Simulation (Ouster OS1 Built-in IMU):}
+\begin{itemize}
+    \item Factory-calibrated 6-axis IMU integrated with LiDAR
+    \item No separate calibration required
+\end{itemize}
+
+\textbf{Real-world (LPMS IG1 CAN):}
+\begin{itemize}
+    \item Industrial-grade factory calibration
+    \item 9-DOF sensor (gyro, accel, magnetometer)
+    \item No manual gyro bias estimation or magnetometer calibration performed
+    \item Sensor mounting: rigidly attached to robot base
+\end{itemize}
+
+\subsection{Wheel Odometry Calibration}
+
+Wheel encoders use nominal values from robot specifications:
+
+\begin{itemize}
+    \item Wheel radius: $r = 0.1$ m (nominal from Scout Mini specifications)
+    \item Wheelbase: $L = 0.45$ m (measured from CAD model)
+    \item No systematic calibration procedures (UMBmark, wheel diameter correction) performed
+    \item Odometry drift corrected by UKF sensor fusion with IMU and magnetometer
+\end{itemize}
+
+\subsection{PINN Training}
+
+\subsubsection{Dataset Generation}
+
+\textbf{Simulation-based data collection:}
+\begin{enumerate}
+    \item Run robot in Gazebo with diverse trajectories (straight, curved, obstacle-rich)
+    \item Record: position, velocity, terrain properties, obstacle density, laser scan statistics
+    \item Ground truth energy: Integrate power consumption from Gazebo physics
+    \item Generate 10,000 training samples over 20 hours of simulated operation
+\end{enumerate}
+
+\textbf{Data augmentation:}
+\begin{itemize}
+    \item Add Gaussian noise to inputs: $\sigma_{\text{noise}} = 5\%$ of range
+    \item Rotate trajectories (yaw augmentation)
+    \item Scale velocities: $\times$[0.8, 1.2]
+    \item Final dataset: 30,000 samples
+\end{itemize}
+
+\subsubsection{Training Procedure}
+
+\begin{enumerate}
+    \item Split data: 70\% train, 15\% validation, 15\% test
+    \item Initialize network with Xavier initialization
+    \item Train for 200 epochs with early stopping (patience=20)
+    \item Learning rate schedule: Start $\eta = 10^{-3}$, reduce by 0.5 when validation loss plateaus
+    \item Select model with lowest validation loss
+    \item Evaluate on test set
+\end{enumerate}
+
+\textbf{Training time:} 15-20 minutes on NVIDIA RTX 3090 GPU
+
+\textbf{Test set performance:}
+\begin{itemize}
+    \item Energy MAE: 3.2 J/m (7.1\% error)
+    \item Stability MAE: 0.05 (5.0\% error)
+    \item Inference time: 3.5ms per query on Jetson Orin
+\end{itemize}
+
+\subsection{Parameter Tuning}
+
+\subsubsection{NSGA-II Hyperparameters}
+
+\textbf{Tuning method:} Grid search over 5 scenarios
+\begin{itemize}
+    \item Population: [30, 40, 50] → Selected 40 (best trade-off)
+    \item Generations: [10, 12, 15] → Selected 12 (diminishing returns after)
+    \item Crossover rate: [0.7, 0.8, 0.9] → Selected 0.8
+    \item Mutation rate: [0.4, 0.5, 0.6] → Selected 0.5
+\end{itemize}
+
+\subsubsection{DWA Weights}
+
+\textbf{Tuning method:} Manual tuning + sensitivity analysis
+\begin{itemize}
+    \item Initial values from literature
+    \item Adjust based on observed behavior (oscillations, clearance violations, energy use)
+    \item Sensitivity analysis: Vary each weight $\pm$20\%, measure mission success rate
+    \item Final values: $w_{\text{goal}}=1.5$, $w_{\text{speed}}=0.7$, $w_{\text{clearance}}=3.0$, $w_{\text{path}}=1.0$, $w_{\text{free}}=0.8$
+\end{itemize}
+
+\subsection{Real-Robot Parameter Adaptation}
+
+\textbf{Differences from simulation:}
+\begin{table}[h]
+\centering
+\caption{Parameter Adaptation for Real Robot}
+\label{tab:real_robot_params}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Parameter} & \textbf{Simulation} & \textbf{Real Robot} & \textbf{Reason} \\
+\midrule
+Max linear velocity & 1.0 m/s & 0.8 m/s & Safety margin \\
+Process noise $Q_{xx}$ & 0.1 & 0.15 & Real sensor noise \\
+Emergency stop distance & 0.2 m & 0.25 m & Reaction time \\
+PINN timeout & 2.0 s & 1.5 s & Lower latency needs \\
+Planning rate & 1.0 Hz & 0.5 Hz & Computational load \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Summary}
+
+This chapter detailed the implementation of the \acrshort{piec} framework:
+\begin{itemize}
+    \item \textbf{Simulation:} Gazebo environment with Scout Mini model, realistic 3D LiDAR (Ouster OS1) and IMU sensors
+    \item \textbf{Real robot:} Scout Mini with Jetson Orin, RoboSense Helios-32 F70 3D LiDAR, LPMS IG1 CAN IMU
+    \item \textbf{Software:} \acrshort{ros} 2 Humble architecture with modular nodes on Ubuntu 22.04 LTS
+    \item \textbf{Calibration:} Factory-calibrated sensors, nominal odometry parameters, UKF-based sensor fusion
+\end{itemize}
+
+The next chapters present experimental results validating the framework's performance.
+
+% TODO: Add Figure 4.2 - Real Scout Mini robot with sensors labeled
+% Photo with callouts for: Jetson Orin, LiDAR, IMU, battery, E-stop
+% Reference: Will be created as figures/scout_mini_real.jpg
+
+% TODO: Add Figure 4.3 - ROS 2 node graph
+% rqt_graph showing all nodes, topics, and services
+% Reference: Will be created as figures/ros2_graph.pdf
+

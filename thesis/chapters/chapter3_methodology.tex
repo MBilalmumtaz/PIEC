@@ -1,0 +1,1529 @@
+\chapter{Methodology}
+\label{ch:methodology}
+
+This chapter presents the technical foundations of the \acrshort{piec} Navigation Framework. We begin with an overview of the system architecture in Section~\ref{sec:meth_architecture}, then detail each of the five key components: the \acrshort{pinn} surrogate model (Section~\ref{sec:meth_pinn}), multi-objective \acrshort{nsga} path optimizer (Section~\ref{sec:meth_optimizer}), \acrshort{ukf} localization (Section~\ref{sec:meth_ukf}), adaptive \acrshort{dwa} controller (Section~\ref{sec:meth_dwa}), and system integration (Section~\ref{sec:meth_integration}).
+
+\section{System Architecture}
+\label{sec:meth_architecture}
+
+The \acrshort{piec} framework consists of five integrated components operating in a hierarchical control architecture (see Figure~\ref{fig:system_architecture}):
+
+\begin{enumerate}
+    \item \textbf{Perception Layer:} Sensor inputs (LiDAR, IMU, wheel encoders, magnetometer)
+    \item \textbf{State Estimation:} \acrshort{ukf} localization providing 5D state estimate $\vect{x} = [x, y, \theta, v, \omega]\transpose$
+    \item \textbf{Global Planning:} \acrshort{nsga} multi-objective path optimizer
+    \item \textbf{Energy Prediction:} \acrshort{pinn} surrogate model service
+    \item \textbf{Local Control:} Adaptive \acrshort{dwa} obstacle avoidance
+\end{enumerate}
+
+\subsection{Information Flow}
+
+The system operates at multiple temporal frequencies:
+\begin{itemize}
+    \item \textbf{Control loop:} 20 Hz (50ms cycle) - \acrshort{dwa} trajectory execution
+    \item \textbf{State estimation:} 20 Hz (50ms cycle) - \acrshort{ukf} updates
+    \item \textbf{Global planning:} 1 Hz (1s cycle) - \acrshort{nsga} replanning
+    \item \textbf{PINN queries:} On-demand (typically 10-15 calls per planning cycle)
+\end{itemize}
+
+% TODO: Add Figure 3.1 - System architecture diagram showing:
+% - Sensor inputs → UKF → State estimate
+% - Goal + Map → NSGA Optimizer → Global path
+% - PINN Service (queried by optimizer)
+% - Global path + Local sensors → DWA → Velocity commands
+% - Robot platform
+% Reference: Will be created as figures/system_architecture.pdf
+
+\subsection{Component Interactions}
+
+\paragraph{UKF → Optimizer} State estimate $\vect{x}$ and covariance $\mat{P}$ provide current robot pose and uncertainty for path planning initialization.
+
+\paragraph{Optimizer ↔ PINN} For each candidate path in \acrshort{nsga}, the optimizer queries the \acrshort{pinn} service to predict energy consumption and stability, which become objectives in the multi-objective optimization.
+
+\paragraph{Optimizer → DWA} The selected Pareto-optimal path from \acrshort{nsga} serves as the global reference for local trajectory tracking.
+
+\paragraph{DWA → Robot} The \acrshort{dwa} controller outputs velocity commands $(v, \omega)$ at 20 Hz for real-time obstacle avoidance.
+
+\section{PINN Surrogate Model}
+\label{sec:meth_pinn}
+
+The \acrshort{pinn} surrogate model predicts mobile robot energy consumption and stability by learning from data while respecting physical constraints. This section derives the complete formulation.
+
+% Code Reference: src/piec_pinn_surrogate/piec_pinn_surrogate/pinn_model.py (228 lines)
+
+\subsection{Input-Output Specification}
+
+\paragraph{Input Features}
+The network accepts a 10-dimensional input vector $\vect{u} \in \Real^{10}$:
+\begin{equation}
+\vect{u} = \begin{bmatrix}
+x \\ y \\ \theta \\ v \\ \omega \\ \text{slope} \\ \text{roughness} \\ \rho_{\text{obs}} \\ d_{\text{clear}} \\ \text{terrain}
+\end{bmatrix}
+\label{eq:pinn_input}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $x, y \in \Real$: Robot position (m)
+    \item $\theta \in [-\pi, \pi]$: Heading angle (rad)
+    \item $v \in [0, v_{\max}]$: Linear velocity (m/s)
+    \item $\omega \in [-\omega_{\max}, \omega_{\max}]$: Angular velocity (rad/s)
+    \item $\text{slope} \in [-1, 1]$: Terrain slope (normalized)
+    \item $\text{roughness} \in [0, 1]$: Surface roughness
+    \item $\rho_{\text{obs}} \in [0, 1]$: Obstacle density from laser scan
+    \item $d_{\text{clear}} \in [0, d_{\max}]$: Minimum clearance to obstacles (m)
+    \item $\text{terrain} \in \{0, 1, 2, \ldots\}$: Discrete terrain type
+\end{itemize}
+
+\paragraph{Output Features}
+The network outputs a 2-dimensional vector $\vect{y} \in \Real^2$:
+\begin{equation}
+\vect{y} = \begin{bmatrix}
+E \\ S
+\end{bmatrix}
+\label{eq:pinn_output}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $E \geq 0$: Energy consumption rate (J/m), constrained via ReLU activation
+    \item $S \in [0, 1]$: Stability metric, constrained via sigmoid activation
+\end{itemize}
+
+\subsection{Network Architecture}
+
+The \acrshort{pinn} uses a fully connected neural network with the following architecture:
+
+\begin{align}
+\vect{h}_1 &= \tanh(\mat{W}_1 \vect{u} + \vect{b}_1) \quad &\text{(Input → 128 units)} \label{eq:layer1}\\
+\vect{h}'_1 &= \text{Dropout}(\vect{h}_1, p=0.1) \quad &\text{(Regularization)} \label{eq:dropout1}\\
+\vect{h}_2 &= \tanh(\mat{W}_2 \vect{h}'_1 + \vect{b}_2) \quad &\text{(128 → 128 units)} \label{eq:layer2}\\
+\vect{h}'_2 &= \text{Dropout}(\vect{h}_2, p=0.1) \quad &\text{(Regularization)} \label{eq:dropout2}\\
+\vect{h}_3 &= \tanh(\mat{W}_3 \vect{h}'_2 + \vect{b}_3) \quad &\text{(128 → 64 units)} \label{eq:layer3}\\
+\vect{y} &= \mat{W}_4 \vect{h}_3 + \vect{b}_4 \quad &\text{(64 → 2 units)} \label{eq:output_layer}
+\end{align}
+
+\textbf{Design Rationale:}
+\begin{itemize}
+    \item \textbf{Tanh activation:} Smooth, bounded nonlinearity suitable for physics-informed learning
+    \item \textbf{Dropout (p=0.1):} Prevents overfitting on training data
+    \item \textbf{Gradual dimension reduction:} 128→128→64→2 preserves information while reducing parameters
+    \item \textbf{No activation on output:} Allows unconstrained prediction before physics constraints
+\end{itemize}
+
+\subsection{Physics-Based Energy Decomposition}
+
+The energy model decomposes total energy into six physical components:
+
+\subsubsection{Kinetic Energy}
+\begin{equation}
+E_{\text{kinetic}} = \frac{1}{2} m v^2
+\label{eq:kinetic_energy}
+\end{equation}
+Represents translational kinetic energy. For unit mass ($m=1$), this simplifies to $\frac{1}{2}v^2$.
+
+\subsubsection{Turning Energy}
+\begin{equation}
+E_{\text{turning}} = \alpha_{\omega} |\omega|
+\label{eq:turning_energy}
+\end{equation}
+where $\alpha_{\omega} = 0.2$ accounts for energy required for angular motion (wheel differential drive, friction during turns).
+
+\subsubsection{Slope Energy}
+\begin{equation}
+E_{\text{slope}} = \alpha_s |\theta_{\text{slope}}| \cdot v
+\label{eq:slope_energy}
+\end{equation}
+where $\alpha_s = 2.0$ and $\theta_{\text{slope}}$ is terrain inclination. Positive slopes require additional energy to overcome gravity: $F_{\text{gravity}} = mg\sin(\theta)$.
+
+\subsubsection{Friction Energy}
+\begin{equation}
+E_{\text{friction}} = \alpha_r \cdot \text{roughness} \cdot v
+\label{eq:friction_energy}
+\end{equation}
+where $\alpha_r = 0.1$. Rolling resistance depends on surface properties and velocity.
+
+\subsubsection{Obstacle Energy}
+\begin{equation}
+E_{\text{obstacle}} = \alpha_{\text{obs}} \cdot \rho_{\text{obs}} \cdot v
+\label{eq:obstacle_energy}
+\end{equation}
+where $\alpha_{\text{obs}} = 0.3$. Higher obstacle density increases path complexity, requiring more frequent velocity adjustments and turns.
+
+\subsubsection{Clearance Energy}
+\begin{equation}
+E_{\text{clearance}} = \begin{cases}
+-\alpha_c \cdot \frac{\text{ReLU}(d_{\text{safe}} - d_{\text{clear}})}{d_{\text{safe}}} & \text{if } d_{\text{clear}} < d_{\text{safe}} \\
+0 & \text{otherwise}
+\end{cases}
+\label{eq:clearance_energy}
+\end{equation}
+where $\alpha_c = 0.1$ and $d_{\text{safe}} = 2.0$ m. This penalty term discourages paths close to obstacles (negative contribution, increasing total energy).
+
+\subsubsection{Combined Physics Energy}
+\begin{equation}
+E_{\text{physics}} = E_{\text{kinetic}} + E_{\text{turning}} + E_{\text{slope}} + E_{\text{friction}} + E_{\text{obstacle}} + E_{\text{clearance}}
+\label{eq:total_physics_energy}
+\end{equation}
+
+\subsection{Adaptive Energy Blending}
+
+The final energy prediction adaptively blends neural network output $E_{\text{NN}}$ with physics-based energy $E_{\text{physics}}$:
+
+\begin{equation}
+w_{\text{physics}} = 0.3 + 0.3 \cdot \rho_{\text{obs}}
+\label{eq:blend_weight}
+\end{equation}
+
+\begin{equation}
+E_{\text{final}} = (1 - w_{\text{physics}}) E_{\text{NN}} + w_{\text{physics}} E_{\text{physics}}
+\label{eq:energy_blending}
+\end{equation}
+
+\textbf{Rationale:} In high obstacle density regions ($\rho_{\text{obs}} \rightarrow 1$), physics models are more reliable (weight $\rightarrow 0.6$). In open space ($\rho_{\text{obs}} \rightarrow 0$), learned model dominates (weight $\rightarrow 0.3$).
+
+\subsection{Stability Model}
+
+The stability metric $S \in [0, 1]$ quantifies trajectory confidence:
+
+\begin{equation}
+S_{\text{reduction}} = 0.2|v| + 0.3|\theta_{\text{slope}}| + 0.4\rho_{\text{obs}} + 0.2\left(1 - \sigma(d_{\text{clear}} - 1)\right)
+\label{eq:stability_reduction}
+\end{equation}
+
+where $\sigma(x) = \frac{1}{1 + e^{-x}}$ is the sigmoid function.
+
+\begin{equation}
+S_{\text{adjusted}} = \text{clamp}\left( S_{\text{NN}} (1 - S_{\text{reduction}}), 0.1, 1.0 \right)
+\label{eq:stability_adjusted}
+\end{equation}
+
+\textbf{Interpretation:} Stability decreases with high velocity, steep slopes, dense obstacles, and small clearances. The base neural network prediction $S_{\text{NN}}$ is modulated by physics-based reduction factors.
+
+\subsection{Physics-Informed Loss Function}
+
+The total training loss combines data-fitting and physics constraints:
+
+\begin{equation}
+\mathcal{L}_{\text{total}} = \mathcal{L}_{\text{data}} + \lambda_{\text{physics}} \mathcal{L}_{\text{physics}}
+\label{eq:total_loss}
+\end{equation}
+
+where $\lambda_{\text{physics}} = 0.15$ is the physics loss weight.
+
+\subsubsection{Data Loss}
+Standard mean squared error on labeled training data:
+\begin{equation}
+\mathcal{L}_{\text{data}} = \frac{1}{N} \sum_{i=1}^N \left\| \vect{y}_i - \hat{\vect{y}}_i \right\|^2
+\label{eq:data_loss}
+\end{equation}
+
+\subsubsection{Physics Loss Components}
+
+The physics loss enforces six constraints:
+
+\paragraph{1. Non-Negativity Constraint}
+Energy must be non-negative:
+\begin{equation}
+\mathcal{L}_{\text{non-neg}} = 0.1 \cdot \mathbb{E}\left[ \text{ReLU}(-E) \right]
+\label{eq:loss_nonneg}
+\end{equation}
+
+\paragraph{2. Bounds Constraint}
+Stability must be in $[0, 1]$:
+\begin{equation}
+\mathcal{L}_{\text{bounds}} = 0.1 \cdot \mathbb{E}\left[ \text{ReLU}(S - 1) + \text{ReLU}(-S) \right]
+\label{eq:loss_bounds}
+\end{equation}
+
+\paragraph{3. Energy Conservation}
+Predicted energy should match physics-based expectation:
+\begin{equation}
+\mathcal{L}_{\text{conservation}} = 0.01 \cdot \mathbb{E}\left[ (E_{\text{pred}} - E_{\text{physics}})^2 \right]
+\label{eq:loss_conservation}
+\end{equation}
+
+\paragraph{4. Stability Physics}
+Predicted stability should align with physics-based stability:
+\begin{equation}
+\mathcal{L}_{\text{stability}} = 0.01 \cdot \mathbb{E}\left[ (S_{\text{pred}} - S_{\text{expected}})^2 \right]
+\label{eq:loss_stability}
+\end{equation}
+
+\paragraph{5. Clearance Penalty}
+Discourage predictions favoring low clearances:
+\begin{equation}
+\mathcal{L}_{\text{clearance}} = 0.05 \cdot \mathbb{E}\left[ \text{ReLU}(0.5 - d_{\text{clear}}) \right]
+\label{eq:loss_clearance}
+\end{equation}
+
+\paragraph{6. Obstacle Smoothness}
+Regularize obstacle density influence:
+\begin{equation}
+\mathcal{L}_{\text{smoothness}} = 0.01 \cdot \mathbb{E}\left[ |\rho_{\text{obs}}| \right]
+\label{eq:loss_smoothness}
+\end{equation}
+
+\paragraph{Combined Physics Loss}
+\begin{equation}
+\mathcal{L}_{\text{physics}} = \mathcal{L}_{\text{non-neg}} + \mathcal{L}_{\text{bounds}} + \mathcal{L}_{\text{conservation}} + \mathcal{L}_{\text{stability}} + \mathcal{L}_{\text{clearance}} + \mathcal{L}_{\text{smoothness}}
+\label{eq:physics_loss_combined}
+\end{equation}
+
+\subsection{Training Procedure}
+
+\textbf{Optimizer:} Adam with learning rate $\eta = 10^{-3}$, weight decay $\lambda_{\text{wd}} = 10^{-5}$
+
+\textbf{Scheduler:} ReduceLROnPlateau with patience=10, factor=0.5, min\_lr=$10^{-6}$
+
+\textbf{Batch size:} 64
+
+\textbf{Epochs:} 200 (with early stopping, patience=20)
+
+\textbf{Hardware:} NVIDIA GPU (CUDA acceleration)
+
+\textbf{Training time:} Approximately 15-20 minutes for 10,000 samples
+
+% TODO: Add Figure 3.2 - PINN network architecture diagram
+% Show: Input (10D) → FC1 (128) → FC2 (128) → FC3 (64) → Output (2D)
+% Include activation functions and dropout layers
+% Reference: Will be created as figures/pinn_architecture.pdf
+
+% TODO: Add Figure 3.3 - Energy component decomposition
+% Bar chart showing contribution of each of 6 energy components
+% Reference: Will be created as figures/energy_decomposition.pdf
+
+
+\section{Multi-Objective NSGA-II Path Optimizer}
+\label{sec:meth_optimizer}
+
+The path optimizer uses \acrfull{nsga} to simultaneously optimize seven competing objectives, producing Pareto-optimal path sets from which mission-specific solutions can be selected.
+
+% Code Reference: src/piec_path_optimizer/piec_path_optimizer/
+% - complete_path_optimizer.py (2348 lines)
+% - objectives.py, nsga2.py, uncertainty_aware.py
+
+\subsection{Problem Formulation}
+
+\paragraph{Path Representation}
+A path $\mathcal{P}$ is represented as a sequence of waypoints:
+\begin{equation}
+\mathcal{P} = \{(x_0, y_0), (x_1, y_1), \ldots, (x_n, y_n)\}
+\label{eq:path_representation}
+\end{equation}
+where $(x_0, y_0)$ is the start position, $(x_n, y_n)$ is the goal, and intermediate waypoints $n \leq 8$ are optimized.
+
+\paragraph{Multi-Objective Optimization Problem}
+\begin{equation}
+\begin{aligned}
+\min_{\mathcal{P}} \quad & \vect{f}(\mathcal{P}) = [f_1, f_2, \ldots, f_7]\transpose \\
+\text{s.t.} \quad & \mathcal{P} \text{ is collision-free} \\
+& d_{\text{clear}}(\mathcal{P}) \geq d_{\min} \\
+& \mathcal{P}_0 = \text{start}, \quad \mathcal{P}_n = \text{goal}
+\end{aligned}
+\label{eq:moo_problem}
+\end{equation}
+
+\subsection{Objective Functions}
+
+\subsubsection{Objective 1: Path Length}
+\begin{equation}
+f_1 = L(\mathcal{P}) = \sum_{i=0}^{n-1} \sqrt{(x_{i+1} - x_i)^2 + (y_{i+1} - y_i)^2}
+\label{eq:obj_length}
+\end{equation}
+
+\textbf{Weight:} $w_1 = 0.12$. Minimizing path length reduces travel time and baseline energy consumption.
+
+\subsubsection{Objective 2: Average Curvature}
+\begin{equation}
+f_2 = \frac{1}{n-2} \sum_{i=1}^{n-2} \arccos\left( \frac{\vect{v}_i \cdot \vect{v}_{i+1}}{\|\vect{v}_i\| \|\vect{v}_{i+1}\|} \right)
+\label{eq:obj_curvature}
+\end{equation}
+
+where $\vect{v}_i = (x_{i+1} - x_i, y_{i+1} - y_i)$ is the path segment vector.
+
+\textbf{Weight:} $w_2 = 0.08$. Smooth paths with low curvature reduce angular accelerations and improve tracking accuracy.
+
+\subsubsection{Objective 3: Obstacle Cost}
+\begin{equation}
+f_3 = C_{\text{obs}} - 0.3 \cdot \text{bonus}_{\text{free}}
+\label{eq:obj_obstacle_main}
+\end{equation}
+
+where the obstacle cost is:
+\begin{equation}
+C_{\text{obs}} = \sum_{i=0}^{n} w_{\text{penalty}} \cdot \max(0, d_{\min} - d_{\text{clear}}(x_i, y_i))^2
+\label{eq:obstacle_cost}
+\end{equation}
+
+with $w_{\text{penalty}} = 6.0$ and $d_{\min} = 0.4$ m.
+
+The free-space bonus rewards paths through open regions:
+\begin{equation}
+\text{bonus}_{\text{free}} = \frac{1}{n} \sum_{i=0}^{n-1} \sum_{j=0}^{N_{\text{samples}}} \mathbb{I}_{\text{free}}(x_j, y_j)
+\label{eq:free_space_bonus}
+\end{equation}
+
+where $\mathbb{I}_{\text{free}} = 1$ if free-space grid value $> 0.7$, else 0.
+
+\textbf{Weight:} $w_3 = 0.35$ (highest weight). Safety is paramount in navigation.
+
+\subsubsection{Objective 4: Localization Uncertainty}
+\begin{equation}
+f_4 = \frac{1}{n} \sum_{i=0}^{n} U(x_i, y_i)
+\label{eq:obj_uncertainty}
+\end{equation}
+
+where the uncertainty at each point is:
+\begin{equation}
+U(x, y) = \text{trace}(\mat{\Sigma}_{\text{pos}}(x, y)) + 0.5 \sigma_{\text{yaw}}^2(x, y)
+\label{eq:uncertainty_metric}
+\end{equation}
+
+$\mat{\Sigma}_{\text{pos}}$ is the position covariance from the uncertainty map, and $\sigma_{\text{yaw}}^2$ is yaw variance.
+
+\textbf{Weight:} $w_4 = 0.08$. Paths through high-uncertainty regions degrade localization quality.
+
+\subsubsection{Objective 5: Deviation from Straight Line}
+\begin{equation}
+f_5 = \frac{|L(\mathcal{P}) - L_{\text{straight}}|}{\max(L_{\text{straight}}, 0.1)}
+\label{eq:obj_deviation}
+\end{equation}
+
+where $L_{\text{straight}} = \|(x_n, y_n) - (x_0, y_0)\|$ is the Euclidean distance.
+
+\textbf{Weight:} $w_5 = 0.12$. Encourages paths closer to direct routes when feasible.
+
+\subsubsection{Objective 6: PINN-Predicted Energy}
+\begin{equation}
+f_6 = E_{\text{PINN}}(\mathcal{P}) = \sum_{i=0}^{n-1} E_{\text{PINN}}(x_i, y_i, \theta_i, v_i, \omega_i, \ldots)
+\label{eq:obj_pinn_energy}
+\end{equation}
+
+The \acrshort{pinn} service is queried for each path segment with estimated velocities and terrain properties.
+
+\textbf{Weight:} $w_6 = 0.15$ (second highest). Energy efficiency is a primary objective.
+
+\subsubsection{Objective 7: PINN-Predicted Stability}
+\begin{equation}
+f_7 = 1.0 - \frac{1}{n} \sum_{i=0}^{n-1} S_{\text{PINN}}(x_i, y_i, \ldots)
+\label{eq:obj_pinn_stability}
+\end{equation}
+
+Stability values are in $[0, 1]$. We minimize $(1 - S)$ to maximize stability.
+
+\textbf{Weight:} $w_7 = 0.10$. Stable paths reduce risk of localization failure.
+
+\subsection{Composite Fitness Function}
+
+For selection purposes (not the multi-objective optimization itself), we define a scalar fitness:
+\begin{equation}
+F(\mathcal{P}) = \sum_{j=1}^{7} w_j \cdot f_j(\mathcal{P})
+\label{eq:composite_fitness}
+\end{equation}
+
+This is used only for reporting and initial population ranking; \acrshort{nsga} operates on the full objective vector.
+
+\subsection{NSGA-II Algorithm}
+
+\subsubsection{Fast Non-Dominated Sorting}
+
+\paragraph{Dominance Relation}
+Path $\mathcal{P}_a$ dominates $\mathcal{P}_b$ (denoted $\mathcal{P}_a \prec \mathcal{P}_b$) if:
+\begin{equation}
+\forall j: f_j(\mathcal{P}_a) \leq f_j(\mathcal{P}_b) \quad \land \quad \exists k: f_k(\mathcal{P}_a) < f_k(\mathcal{P}_b)
+\label{eq:dominance}
+\end{equation}
+
+\paragraph{Sorting Algorithm}
+For each solution $p$ in population $P$:
+\begin{enumerate}
+    \item Compute domination set $S_p = \{q \in P : p \prec q\}$
+    \item Compute domination counter $n_p = |\{q \in P : q \prec p\}|$
+\end{enumerate}
+
+Front assignment:
+\begin{equation}
+\begin{aligned}
+F_1 &= \{p \in P : n_p = 0\} \quad \text{(non-dominated solutions)} \\
+F_{i+1} &= \{q \in S_p : p \in F_i, \, n_q' = 0\}
+\end{aligned}
+\label{eq:front_assignment}
+\end{equation}
+
+where $n_q' = n_q - 1$ after processing each front.
+
+\textbf{Complexity:} $O(MN^2)$ for $M$ objectives and $N$ individuals.
+
+\subsubsection{Crowding Distance}
+
+For diversity preservation within each front $F_i$, crowding distance $d_c(p)$ is computed:
+
+\paragraph{Algorithm}
+\begin{enumerate}
+    \item For each objective $m = 1, \ldots, M$:
+    \begin{enumerate}
+        \item Sort $F_i$ by $f_m$
+        \item Set boundary distances: $d_c(\text{first}) = d_c(\text{last}) = \infty$
+        \item For interior points $j = 2, \ldots, |F_i| - 1$:
+        \begin{equation}
+        d_c^{(m)}(j) = \frac{f_m(j+1) - f_m(j-1)}{f_m^{\max} - f_m^{\min}}
+        \label{eq:crowding_distance_obj}
+        \end{equation}
+    \end{enumerate}
+    \item Aggregate across objectives:
+    \begin{equation}
+    d_c(p) = \sum_{m=1}^{M} d_c^{(m)}(p)
+    \label{eq:crowding_distance_total}
+    \end{equation}
+\end{enumerate}
+
+\textbf{Interpretation:} Higher $d_c$ indicates the solution is in a sparse region of objective space, promoting diversity.
+
+\subsubsection{Selection}
+
+Tournament selection with crowded comparison operator $\prec_n$:
+
+\begin{equation}
+p \prec_n q \iff \begin{cases}
+\text{rank}(p) < \text{rank}(q) & \text{(different fronts)} \\
+d_c(p) > d_c(q) & \text{(same front, prefer diversity)}
+\end{cases}
+\label{eq:crowded_comparison}
+\end{equation}
+
+\subsubsection{Genetic Operators}
+
+\paragraph{Crossover (Rate: 0.8)}
+Two-point crossover exchanges waypoint subsequences between parent paths:
+\begin{equation}
+\begin{aligned}
+\text{Child}_1 &= \text{Parent}_1[1:k_1] + \text{Parent}_2[k_1:k_2] + \text{Parent}_1[k_2:n] \\
+\text{Child}_2 &= \text{Parent}_2[1:k_1] + \text{Parent}_1[k_1:k_2] + \text{Parent}_2[k_2:n]
+\end{aligned}
+\label{eq:crossover}
+\end{equation}
+
+where $k_1, k_2$ are randomly selected crossover points.
+
+\paragraph{Mutation (Rate: 0.5)}
+Uncertainty-aware mutation with free-space consideration (see Section~\ref{sec:uncertainty_mutation}).
+
+\subsection{Uncertainty-Aware Mutation}
+\label{sec:uncertainty_mutation}
+
+Standard mutation perturbs waypoints randomly. Our enhancement biases mutation toward high free-space, low-uncertainty regions:
+
+\paragraph{Mutation Algorithm}
+For each waypoint $i$ (except start/goal):
+\begin{enumerate}
+    \item With probability $p_{\text{mut}} = 0.5$, mutate waypoint
+    \item Evaluate current fitness:
+    \begin{equation}
+    \Phi_{\text{current}} = 0.6 \cdot C(x_i, y_i) + 0.4 \cdot F(x_i, y_i)
+    \label{eq:mutation_fitness_current}
+    \end{equation}
+    where $C$ is clearance and $F$ is free-space score
+    \item Sample $N_{\text{candidates}} = 5$ candidate positions:
+    \begin{equation}
+    (x'_j, y'_j) = (x_i, y_i) + r_j (\cos\phi_j, \sin\phi_j)
+    \label{eq:candidate_sampling}
+    \end{equation}
+    where $r_j \sim \mathcal{U}(0, 0.6)$ m and $\phi_j \sim \mathcal{U}(0, 2\pi)$
+    \item Select candidate with highest fitness:
+    \begin{equation}
+    (x_i, y_i) \leftarrow \arg\max_{j} \Phi_j
+    \label{eq:best_candidate}
+    \end{equation}
+\end{enumerate}
+
+\paragraph{Free-Space Score}
+For a point $(x, y)$, evaluate $7 \times 7$ neighborhood:
+\begin{equation}
+F(x, y) = \frac{1}{49} \sum_{di=-3}^{3} \sum_{dj=-3}^{3} \mathbb{I}_{\text{free}}(\text{cell}_{x+di, y+dj})
+\label{eq:free_space_score}
+\end{equation}
+
+This encourages mutation toward open spaces, improving path feasibility.
+
+\subsection{Stuck Detection and Recovery}
+
+Long-duration missions may encounter situations where the robot becomes stuck (local minima, deadlocks). We implement three stuck detection mechanisms:
+
+\subsubsection{Velocity-Based Detection}
+
+Track total path length traveled over time window $T_{\text{window}} = 15$ s:
+\begin{equation}
+M_{\text{total}}(t) = \sum_{i=0}^{N(t)-1} \|(x_{i+1}, y_{i+1}) - (x_i, y_i)\|
+\label{eq:total_movement}
+\end{equation}
+
+where positions are sampled at 20 Hz.
+
+\textbf{Stuck criterion:}
+\begin{equation}
+M_{\text{total}} < \tau_{\text{move}} = 0.25 \text{ m}
+\label{eq:stuck_velocity}
+\end{equation}
+
+\subsubsection{Angular Oscillation Detection}
+
+Compute radius of gyration over position history:
+\begin{equation}
+R_{\text{gyration}} = \frac{1}{N} \sum_{i=1}^{N} \sqrt{(x_i - \bar{x})^2 + (y_i - \bar{y})^2}
+\label{eq:radius_gyration}
+\end{equation}
+
+where $(\bar{x}, \bar{y})$ is the centroid of recent positions.
+
+\textbf{Stuck criterion:}
+\begin{equation}
+R_{\text{gyration}} < \tau_{\text{radius}} = 0.35 \text{ m}
+\label{eq:stuck_angular}
+\end{equation}
+
+Indicates robot is rotating in place without making progress.
+
+\subsubsection{Positional Stagnation}
+
+\textbf{Combined stuck detection:}
+\begin{equation}
+\text{Stuck} \iff \begin{cases}
+M_{\text{total}} < 0.25 \text{ m} \, \land \\
+R_{\text{gyration}} < 0.35 \text{ m} \, \land \\
+t - t_{\text{goal\_received}} > 12 \text{ s} \, \land \\
+d_{\text{to\_goal}} > 0.35 \text{ m}
+\end{cases}
+\label{eq:stuck_combined}
+\end{equation}
+
+\textbf{Recovery action:} Trigger escape sequence (replan with exploration bias, increase free-space weight to 0.5).
+
+\textbf{Cooldown:} 20 s between consecutive stuck detections to prevent rapid oscillation.
+
+\subsection{Algorithm Parameters}
+
+\begin{table}[h]
+\centering
+\caption{NSGA-II Path Optimizer Parameters}
+\label{tab:nsga_params}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Unit} \\
+\midrule
+Population size & 40 & individuals \\
+Generations & 12 & - \\
+Crossover rate & 0.8 & - \\
+Mutation rate & 0.5 & - \\
+Max waypoints & 8 & points \\
+Optimization timeout & 2.0 & s \\
+Planning rate & 1.0 & Hz \\
+Robot radius & 0.35 & m \\
+Min obstacle distance & 0.4 & m \\
+Preferred clearance & 1.0 & m \\
+Free space weight & 0.3 & - \\
+Obstacle penalty weight & 6.0 & - \\
+Stuck movement threshold & 0.25 & m \\
+Stuck radius threshold & 0.35 & m \\
+PINN call timeout & 2.0 & s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO: Add Figure 3.4 - NSGA-II flowchart
+% Show: Initialize → Evaluate → Non-dominated Sort → Crowding Distance →
+%       Selection → Crossover → Mutation → Combine → Next generation
+% Reference: Will be created as figures/nsga2_flowchart.pdf
+
+% TODO: Add Figure 3.5 - Pareto front example
+% 2D plot showing energy vs. path length for all solutions
+% Color-code by front number (F1, F2, F3, ...)
+% Reference: Will be created as figures/pareto_front_example.pdf
+
+
+\section{UKF Localization}
+\label{sec:meth_ukf}
+
+The \acrfull{ukf} provides 5D state estimation by fusing wheel odometry, \acrshort{imu}, and magnetometer measurements. This section derives the complete \acrshort{ukf} formulation with enhancements for real-robot deployment.
+
+% Code Reference: src/piec_ukf_localization/piec_ukf_localization/ukf_node.py
+
+\subsection{State Space Model}
+
+\paragraph{State Vector}
+The robot state is represented by a 5-dimensional vector:
+\begin{equation}
+\vect{x} = \begin{bmatrix}
+x \\ y \\ \theta \\ v \\ \omega
+\end{bmatrix} \in \Real^5
+\label{eq:state_vector}
+\end{equation}
+
+where $(x, y)$ is position, $\theta \in [-\pi, \pi]$ is orientation, $v$ is linear velocity, and $\omega$ is angular velocity.
+
+\paragraph{Initial Covariance}
+\begin{equation}
+\mat{P}_0 = \text{diag}(0.2, 0.2, 0.05, 0.1, 0.01)
+\label{eq:initial_covariance}
+\end{equation}
+
+\subsection{Motion Model}
+
+The process model implements constant velocity dynamics with curved motion kinematics.
+
+\paragraph{Straight Motion} ($|\omega| < 0.001$ rad/s):
+\begin{equation}
+\begin{aligned}
+x_{k+1} &= x_k + v_k \cos(\theta_k) \Delta t \\
+y_{k+1} &= y_k + v_k \sin(\theta_k) \Delta t \\
+\theta_{k+1} &= \theta_k
+\end{aligned}
+\label{eq:motion_straight}
+\end{equation}
+
+\paragraph{Curved Motion} ($|\omega| \geq 0.001$ rad/s):
+\begin{equation}
+r = \frac{v_k}{\omega_k}
+\label{eq:turn_radius}
+\end{equation}
+
+\begin{equation}
+\begin{aligned}
+x_{k+1} &= x_k + r \left[ \sin(\theta_k + \omega_k \Delta t) - \sin(\theta_k) \right] \\
+y_{k+1} &= y_k + r \left[ \cos(\theta_k) - \cos(\theta_k + \omega_k \Delta t) \right] \\
+\theta_{k+1} &= \theta_k + \omega_k \Delta t
+\end{aligned}
+\label{eq:motion_curved}
+\end{equation}
+
+\paragraph{Orientation Normalization}
+To maintain $\theta \in [-\pi, \pi]$:
+\begin{equation}
+\theta_{\text{normalized}} = \text{atan2}(\sin(\theta), \cos(\theta))
+\label{eq:angle_normalization}
+\end{equation}
+
+\paragraph{Velocity Dynamics}
+\begin{equation}
+\begin{aligned}
+v_{k+1} &= v_k \\
+\omega_{k+1} &= \omega_k
+\end{aligned}
+\label{eq:velocity_dynamics}
+\end{equation}
+
+Velocities are constant in the process model and updated through measurements.
+
+\paragraph{Process Noise}
+\begin{equation}
+\vect{w}_k \sim \mathcal{N}(\vect{0}, \mat{Q})
+\label{eq:process_noise}
+\end{equation}
+
+\begin{equation}
+\mat{Q} = \text{diag}(0.1, 0.1, 0.05, 0.2, 0.2)
+\label{eq:process_noise_cov}
+\end{equation}
+
+\textbf{Time step:} $\Delta t = 0.05$ s (20 Hz update rate).
+
+\subsection{Measurement Models}
+
+The system incorporates two measurement types:
+
+\subsubsection{Pose Measurement (Wheel Odometry + IMU)}
+
+\begin{equation}
+\vect{z}_{\text{pose}} = \begin{bmatrix}
+x \\ y \\ \theta
+\end{bmatrix} + \vect{v}_{\text{pose}}
+\label{eq:meas_pose}
+\end{equation}
+
+\textbf{Measurement function:}
+\begin{equation}
+h_{\text{pose}}(\vect{x}) = \begin{bmatrix}
+x \\ y \\ \theta
+\end{bmatrix}
+\label{eq:h_pose}
+\end{equation}
+
+\textbf{Measurement noise covariance:}
+\begin{equation}
+\mat{R}_{\text{pose}} = \text{diag}(0.01, 0.01, 0.005)
+\label{eq:R_pose}
+\end{equation}
+
+\subsubsection{Angular Velocity Measurement (IMU Gyroscope)}
+
+\begin{equation}
+z_{\omega} = \omega + v_{\omega}
+\label{eq:meas_angular}
+\end{equation}
+
+\textbf{Measurement function:}
+\begin{equation}
+h_{\omega}(\vect{x}) = \omega
+\label{eq:h_angular}
+\end{equation}
+
+\textbf{Measurement noise covariance:}
+\begin{equation}
+R_{\omega} = 0.01
+\label{eq:R_angular}
+\end{equation}
+
+\subsection{Unscented Transform}
+
+\subsubsection{Sigma Point Parameters}
+
+\begin{equation}
+\lambda = \alpha^2 (n + \kappa) - n
+\label{eq:lambda}
+\end{equation}
+
+\begin{equation}
+c = n + \lambda
+\label{eq:c_param}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\alpha = 10^{-3}$: Spread of sigma points
+    \item $\beta = 2$: Optimal for Gaussian distributions
+    \item $\kappa = 0$: Secondary scaling parameter
+    \item $n = 5$: State dimension
+\end{itemize}
+
+\subsubsection{Sigma Point Generation}
+
+Given current state $\vect{x}$ and covariance $\mat{P}$, generate $2n + 1 = 11$ sigma points:
+
+\begin{equation}
+\mathcal{X}_0 = \vect{x}
+\label{eq:sigma_0}
+\end{equation}
+
+\begin{equation}
+\mathcal{X}_i = \vect{x} + \left(\sqrt{c \mat{P}}\right)_{:,i}, \quad i = 1, \ldots, n
+\label{eq:sigma_positive}
+\end{equation}
+
+\begin{equation}
+\mathcal{X}_{i+n} = \vect{x} - \left(\sqrt{c \mat{P}}\right)_{:,i}, \quad i = 1, \ldots, n
+\label{eq:sigma_negative}
+\end{equation}
+
+where $\sqrt{c \mat{P}}$ is the Cholesky decomposition: $\mat{S}\mat{S}\transpose = c\mat{P}$.
+
+\subsubsection{Weights}
+
+\paragraph{Mean Weights}
+\begin{equation}
+W_m^{(0)} = \frac{\lambda}{c}
+\label{eq:weight_mean_0}
+\end{equation}
+
+\begin{equation}
+W_m^{(i)} = \frac{1}{2c}, \quad i = 1, \ldots, 2n
+\label{eq:weight_mean_i}
+\end{equation}
+
+\paragraph{Covariance Weights}
+\begin{equation}
+W_c^{(0)} = \frac{\lambda}{c} + (1 - \alpha^2 + \beta)
+\label{eq:weight_cov_0}
+\end{equation}
+
+\begin{equation}
+W_c^{(i)} = \frac{1}{2c}, \quad i = 1, \ldots, 2n
+\label{eq:weight_cov_i}
+\end{equation}
+
+\subsection{Predict Step}
+
+\paragraph{Propagate Sigma Points}
+\begin{equation}
+\mathcal{X}_{k+1|k}^{(i)} = f(\mathcal{X}_{k|k}^{(i)}, \Delta t), \quad i = 0, \ldots, 2n
+\label{eq:propagate_sigma}
+\end{equation}
+
+where $f$ is the motion model (Equations~\ref{eq:motion_straight} or~\ref{eq:motion_curved}).
+
+\paragraph{Predicted Mean}
+\begin{equation}
+\hat{\vect{x}}_{k+1|k} = \sum_{i=0}^{2n} W_m^{(i)} \mathcal{X}_{k+1|k}^{(i)}
+\label{eq:predicted_mean}
+\end{equation}
+
+\paragraph{Predicted Covariance}
+\begin{equation}
+\mat{P}_{k+1|k} = \sum_{i=0}^{2n} W_c^{(i)} \left(\mathcal{X}_{k+1|k}^{(i)} - \hat{\vect{x}}_{k+1|k}\right)\left(\mathcal{X}_{k+1|k}^{(i)} - \hat{\vect{x}}_{k+1|k}\right)\transpose + \mat{Q}
+\label{eq:predicted_covariance}
+\end{equation}
+
+\subsection{Update Step}
+
+\paragraph{Measurement Sigma Points}
+\begin{equation}
+\mathcal{Z}_{k+1}^{(i)} = h(\mathcal{X}_{k+1|k}^{(i)}), \quad i = 0, \ldots, 2n
+\label{eq:measurement_sigma}
+\end{equation}
+
+\paragraph{Predicted Measurement Mean}
+\begin{equation}
+\hat{\vect{z}}_{k+1} = \sum_{i=0}^{2n} W_m^{(i)} \mathcal{Z}_{k+1}^{(i)}
+\label{eq:predicted_measurement}
+\end{equation}
+
+\paragraph{Innovation Covariance}
+\begin{equation}
+\mat{S}_{k+1} = \sum_{i=0}^{2n} W_c^{(i)} \left(\mathcal{Z}_{k+1}^{(i)} - \hat{\vect{z}}_{k+1}\right)\left(\mathcal{Z}_{k+1}^{(i)} - \hat{\vect{z}}_{k+1}\right)\transpose + \mat{R}
+\label{eq:innovation_covariance}
+\end{equation}
+
+\paragraph{Cross-Covariance}
+\begin{equation}
+\mat{P}_{xz} = \sum_{i=0}^{2n} W_c^{(i)} \left(\mathcal{X}_{k+1|k}^{(i)} - \hat{\vect{x}}_{k+1|k}\right)\left(\mathcal{Z}_{k+1}^{(i)} - \hat{\vect{z}}_{k+1}\right)\transpose
+\label{eq:cross_covariance}
+\end{equation}
+
+\paragraph{Kalman Gain}
+\begin{equation}
+\mat{K} = \mat{P}_{xz} \mat{S}_{k+1}^{-1}
+\label{eq:kalman_gain}
+\end{equation}
+
+\paragraph{State Update}
+\begin{equation}
+\vect{x}_{k+1|k+1} = \hat{\vect{x}}_{k+1|k} + \mat{K} (\vect{z}_{k+1} - \hat{\vect{z}}_{k+1})
+\label{eq:state_update}
+\end{equation}
+
+\paragraph{Covariance Update}
+\begin{equation}
+\mat{P}_{k+1|k+1} = \mat{P}_{k+1|k} - \mat{K} \mat{S}_{k+1} \mat{K}\transpose
+\label{eq:covariance_update}
+\end{equation}
+
+\subsection{IMU Yaw Offset Correction}
+
+Real \acrshort{imu} sensors often have systematic yaw biases and discontinuities at $\pm 180°$.
+
+\paragraph{Quaternion to Yaw Conversion}
+\begin{equation}
+\begin{aligned}
+\text{siny\_cosp} &= 2(q_w q_z + q_x q_y) \\
+\text{cosy\_cosp} &= 1 - 2(q_y^2 + q_z^2) \\
+\theta_{\text{raw}} &= \text{atan2}(\text{siny\_cosp}, \text{cosy\_cosp})
+\end{aligned}
+\label{eq:quaternion_to_yaw}
+\end{equation}
+
+\paragraph{Bias Removal and Offset Application}
+\begin{equation}
+\theta_{\text{corrected}} = \theta_{\text{raw}} - \theta_{\text{initial}} + \theta_{\text{offset}}
+\label{eq:yaw_correction}
+\end{equation}
+
+\paragraph{Normalization}
+\begin{equation}
+\theta_{\text{final}} = \text{atan2}(\sin(\theta_{\text{corrected}}), \cos(\theta_{\text{corrected}}))
+\label{eq:yaw_normalization}
+\end{equation}
+
+This ensures smooth transitions across the $\pm \pi$ boundary.
+
+\subsection{Covariance Health Monitoring}
+
+Long-duration missions require mechanisms to detect and recover from filter divergence.
+
+\subsubsection{Health Check Criteria}
+
+\paragraph{1. NaN/Inf Detection}
+\begin{equation}
+\text{Reset if} \quad \exists P_{ij} : P_{ij} \in \{\text{NaN}, \infty\}
+\label{eq:health_nan}
+\end{equation}
+
+\paragraph{2. Trace Threshold}
+\begin{equation}
+\text{Reset if} \quad \text{trace}(\mat{P}) = \sum_{i=1}^{5} P_{ii} > 10.0
+\label{eq:health_trace}
+\end{equation}
+
+Indicates excessive accumulated uncertainty.
+
+\paragraph{3. Condition Number}
+\begin{equation}
+\kappa(\mat{P}) = \frac{\lambda_{\max}(\mat{P})}{\lambda_{\min}(\mat{P})} > 10^8 \implies \text{Reset}
+\label{eq:health_condition}
+\end{equation}
+
+Indicates ill-conditioning (near-singularity).
+
+\subsubsection{Regularization}
+
+If minimum eigenvalue is too small:
+\begin{equation}
+\text{if} \quad \lambda_{\min}(\mat{P}) < 10^{-6}: \quad \mat{P} \leftarrow \mat{P} + (10^{-6} - \lambda_{\min} + 10^{-9}) \mat{I}
+\label{eq:regularization}
+\end{equation}
+
+\subsubsection{Symmetry Enforcement}
+
+Numerical errors can break symmetry:
+\begin{equation}
+\mat{P} \leftarrow \frac{1}{2}(\mat{P} + \mat{P}\transpose)
+\label{eq:symmetry_enforcement}
+\end{equation}
+
+\subsubsection{Reset Covariance}
+
+Upon divergence detection:
+\begin{equation}
+\mat{P}_{\text{reset}} = \text{diag}(0.01, 0.01, 0.01, 0.1, 0.1)
+\label{eq:reset_covariance}
+\end{equation}
+
+State estimate is not reset; only covariance is reinitialized.
+
+\subsection{Mahalanobis Distance Validation}
+
+To reject outlier measurements:
+
+\paragraph{Innovation}
+\begin{equation}
+\boldsymbol{\nu}_k = \vect{z}_k - \hat{\vect{z}}_k
+\label{eq:innovation}
+\end{equation}
+
+\paragraph{Mahalanobis Distance}
+\begin{equation}
+d_M = \sqrt{\boldsymbol{\nu}_k\transpose \mat{S}_k^{-1} \boldsymbol{\nu}_k}
+\label{eq:mahalanobis}
+\end{equation}
+
+\paragraph{Adaptive Threshold}
+\begin{equation}
+\tau_M = \begin{cases}
+5.0 & \text{if rejection rate} \leq 0.3 \\
+7.5 & \text{if rejection rate} > 0.3
+\end{cases}
+\label{eq:adaptive_threshold}
+\end{equation}
+
+\textbf{Rejection criterion:}
+\begin{equation}
+\text{Reject measurement if} \quad d_M > \tau_M
+\label{eq:rejection_criterion}
+\end{equation}
+
+The adaptive threshold prevents excessive rejections during transient periods.
+
+% TODO: Add Figure 3.6 - UKF sigma point distribution
+% 2D plot showing state mean, covariance ellipse, and 11 sigma points
+% Reference: Will be created as figures/ukf_sigma_points.pdf
+
+% TODO: Add Figure 3.7 - Covariance trace over time
+% Time series showing how trace(P) evolves, with reset events marked
+% Reference: Will be created as figures/covariance_trace.pdf
+
+
+\section{Adaptive DWA with Free-Space Awareness}
+\label{sec:meth_dwa}
+
+The local controller combines \acrfull{dwa} with free-space awareness, progressive rotation strategies, and anti-oscillation mechanisms for robust obstacle avoidance.
+
+% Code Reference: src/piec_controller/piec_controller/
+% - dwa_pinn_enhanced.py
+% - controller_node.py
+% - dynamic_dwa_complete.py
+
+\subsection{DWA Fundamentals}
+
+\acrshort{dwa} selects velocity commands by sampling the admissible velocity space and scoring forward-simulated trajectories.
+
+\subsubsection{Velocity Space Constraints}
+
+\paragraph{Kinematic Constraints}
+\begin{equation}
+\begin{aligned}
+v &\in [0, v_{\max}] \\
+\omega &\in [-\omega_{\max}, \omega_{\max}]
+\end{aligned}
+\label{eq:kinematic_constraints}
+\end{equation}
+
+\paragraph{Dynamic Constraints}
+Considering acceleration limits over timestep $\Delta t$:
+\begin{equation}
+\begin{aligned}
+v &\in [v_{\text{current}} - a_{\max} \Delta t, \, v_{\text{current}} + a_{\max} \Delta t] \\
+\omega &\in [\omega_{\text{current}} - \alpha_{\max} \Delta t, \, \omega_{\text{current}} + \alpha_{\max} \Delta t]
+\end{aligned}
+\label{eq:dynamic_constraints}
+\end{equation}
+
+where $a_{\max} = 0.8$ m/s$^2$ and $\alpha_{\max} = 2.0$ rad/s$^2$.
+
+\paragraph{Admissible Velocity Space}
+\begin{equation}
+\mathcal{V}_a = \{(v, \omega) : \text{kinematic} \cap \text{dynamic} \cap \text{collision-free}\}
+\label{eq:admissible_space}
+\end{equation}
+
+\subsection{Trajectory Simulation}
+
+For each velocity sample $(v, \omega) \in \mathcal{V}_a$, simulate forward trajectory over horizon $T_h = 2.0$ s:
+
+\begin{equation}
+\begin{aligned}
+x(t + \Delta t) &= x(t) + v \cos(\theta(t)) \Delta t \\
+y(t + \Delta t) &= y(t) + v \sin(\theta(t)) \Delta t \\
+\theta(t + \Delta t) &= \theta(t) + \omega \Delta t
+\end{aligned}
+\label{eq:trajectory_simulation}
+\end{equation}
+
+Simulate at 10 Hz (10 steps over 2s horizon).
+
+\subsection{Multi-Objective Trajectory Scoring}
+
+Each trajectory is evaluated using five objectives:
+
+\subsubsection{Objective 1: Goal Score}
+\begin{equation}
+O_{\text{goal}} = -\frac{d_{\text{final}}}{d_{\max} + 0.1}
+\label{eq:dwa_goal}
+\end{equation}
+
+where $d_{\text{final}}$ is distance from trajectory endpoint to goal. Negative sign converts minimization to maximization.
+
+\textbf{Weight:} $w_1 = 1.5$
+
+\subsubsection{Objective 2: Speed Score}
+\begin{equation}
+O_{\text{speed}} = \frac{v}{v_{\max}}
+\label{eq:dwa_speed}
+\end{equation}
+
+Rewards higher velocities for efficient navigation.
+
+\textbf{Weight:} $w_2 = 0.7$
+
+\subsubsection{Objective 3: Clearance Score}
+\begin{equation}
+O_{\text{clearance}} = \frac{d_{\min}}{d_{\text{safe}}}
+\label{eq:dwa_clearance}
+\end{equation}
+
+where $d_{\min}$ is minimum distance to obstacles along trajectory and $d_{\text{safe}} = 0.8$ m.
+
+\textbf{Weight:} $w_3 = 3.0$ (highest weight for safety)
+
+\subsubsection{Objective 4: Path Alignment Score}
+\begin{equation}
+O_{\text{path}} = \frac{1}{N_{\text{traj}}} \sum_{i=1}^{N_{\text{traj}}} \frac{1}{1 + d_{\text{path}}(x_i, y_i)}
+\label{eq:dwa_path}
+\end{equation}
+
+where $d_{\text{path}}(x, y)$ is distance from trajectory point to global path.
+
+\textbf{Weight:} $w_4 = 1.0$
+
+\subsubsection{Objective 5: Free-Space Score}
+\begin{equation}
+O_{\text{free}} = \frac{C_{\text{goal\_dir}}}{C_{\max}}
+\label{eq:dwa_free}
+\end{equation}
+
+where $C_{\text{goal\_dir}}$ is clearance in goal direction and $C_{\max}$ is maximum clearance across all directions.
+
+\textbf{Weight:} $w_5 = 0.8$
+
+\subsubsection{Total DWA Score}
+\begin{equation}
+S_{\text{DWA}}(v, \omega) = \sum_{j=1}^{5} w_j \cdot O_j(v, \omega)
+\label{eq:total_dwa_score}
+\end{equation}
+
+\textbf{Selection:}
+\begin{equation}
+(v^*, \omega^*) = \arg\max_{(v, \omega) \in \mathcal{V}_a} S_{\text{DWA}}(v, \omega)
+\label{eq:velocity_selection}
+\end{equation}
+
+\subsection{Dynamic Velocity Limiting}
+
+Standard \acrshort{dwa} uses fixed velocity limits. We implement obstacle-proximity-based dynamic limits.
+
+\subsubsection{Speed Reduction Function}
+
+\begin{equation}
+v_{\text{adjusted}} = \begin{cases}
+0 & d_{\text{obs}} \leq d_{\text{emergency}} \\
+v \cdot \text{sigmoid}(d_{\text{obs}}, d_{\text{emergency}}, d_{\text{slow}}) & d_{\text{emergency}} < d_{\text{obs}} < d_{\text{slow}} \\
+v \cdot (1 - 0.1 - 0.2\frac{d_{\text{safe}} - d_{\text{obs}}}{d_{\text{safe}}}) & d_{\text{slow}} \leq d_{\text{obs}} \leq d_{\text{safe}} \\
+v & d_{\text{obs}} > d_{\text{safe}}
+\end{cases}
+\label{eq:speed_reduction}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $d_{\text{emergency}} = 0.2$ m: Emergency stop distance
+    \item $d_{\text{slow}} = 0.6$ m: Begin slowing
+    \item $d_{\text{safe}} = 0.8$ m: Safe distance threshold
+\end{itemize}
+
+\paragraph{Sigmoid Smoothing}
+For smooth transitions:
+\begin{equation}
+\text{sigmoid}(d, d_1, d_2) = 0.3 + 0.7 \cdot \frac{1}{1 + e^{-8(t - 0.5)}}
+\label{eq:sigmoid_smooth}
+\end{equation}
+
+where $t = \frac{d - d_1}{d_2 - d_1} \in [0, 1]$.
+
+\subsection{Free-Space Awareness}
+
+\subsubsection{Free-Space Direction Evaluation}
+
+Sample 24 directions at 15° intervals:
+\begin{equation}
+\phi_i = \frac{2\pi i}{24}, \quad i = 0, 1, \ldots, 23
+\label{eq:direction_samples}
+\end{equation}
+
+For each direction, compute clearance:
+\begin{equation}
+C(\phi_i) = \max\{r : \text{no obstacle at } (x + r\cos\phi_i, y + r\sin\phi_i), \, r \in [0, r_{\max}]\}
+\label{eq:clearance_direction}
+\end{equation}
+
+\subsubsection{Free-Space Score}
+
+For direction $\phi_i$:
+\begin{equation}
+F(\phi_i) = 0.8 \cdot C(\phi_i) + 0.2 \cdot \left(1 - \frac{|\phi_i - \phi_{\text{goal}}|}{\pi}\right)
+\label{eq:free_space_direction_score}
+\end{equation}
+
+Combines clearance (80\%) with goal alignment (20\%).
+
+\subsection{Progressive Rotation Thresholds}
+
+To avoid excessive in-place rotation far from goal:
+
+\begin{equation}
+\tau_{\text{rotate}} = \begin{cases}
+120° & d_{\text{goal}} > 2.0 \text{ m} \\
+90° & 0.5 \text{ m} < d_{\text{goal}} \leq 2.0 \text{ m} \\
+60° & d_{\text{goal}} \leq 0.5 \text{ m}
+\end{cases}
+\label{eq:progressive_thresholds}
+\end{equation}
+
+\textbf{Control logic:}
+\begin{equation}
+\text{Rotate in place} \iff |\theta_{\text{error}}| > \tau_{\text{rotate}}
+\label{eq:rotation_condition}
+\end{equation}
+
+This prevents premature rotation when far from goal, allowing curved paths.
+
+\subsection{Anti-Oscillation Mechanisms}
+
+\subsubsection{Direction Locking}
+
+Once a rotation direction is selected, maintain it for duration $T_{\text{lock}} = 2.0$ s:
+
+\begin{equation}
+\omega(t) = \begin{cases}
+\text{sign}_{\text{locked}} \cdot \omega_{\max} & t - t_{\text{lock}} < T_{\text{lock}} \land |\theta_{\text{error}}| > \theta_{\min} \\
+\text{sign}(\theta_{\text{error}}) \cdot \omega_{\max} & \text{otherwise}
+\end{cases}
+\label{eq:direction_locking}
+\end{equation}
+
+where $\theta_{\min} = 10°$ is minimum angle to maintain lock.
+
+\subsubsection{Rotation Timeout}
+
+If rotating in place exceeds timeout $T_{\text{timeout}} = 5.0$ s, force forward motion:
+
+\begin{equation}
+\text{if } t - t_{\text{rotate\_start}} > T_{\text{timeout}}: \quad \begin{cases}
+v = \min(0.4 v_{\max}, 0.5 d_{\text{goal}}) \\
+\omega = 0.5 \omega_{\max} \cdot \text{sign}(\theta_{\text{error}})
+\end{cases}
+\label{eq:rotation_timeout}
+\end{equation}
+
+This breaks deadlocks where pure rotation fails to resolve heading error.
+
+\subsection{Heading Control Modes}
+
+The controller operates in three modes depending on path geometry and heading error:
+
+\subsubsection{Mode 1: Straight-Line Detection}
+
+If path deviation is minimal:
+\begin{equation}
+|\Delta y| < 0.03 \text{ m} \land |\Delta x| > 0.2 \text{ m}
+\label{eq:straight_line_condition}
+\end{equation}
+
+\textbf{Control:}
+\begin{equation}
+\begin{aligned}
+v &= \min(0.7 v_{\max}, 0.5 d_{\text{goal}}) \\
+\omega &= 0
+\end{aligned}
+\label{eq:straight_control}
+\end{equation}
+
+Forces zero angular velocity for efficient straight motion.
+
+\subsubsection{Mode 2: Rotate-in-Place}
+
+If heading error exceeds threshold:
+\begin{equation}
+|\theta_{\text{error}}| > \tau_{\text{rotate}}
+\label{eq:rotate_condition}
+\end{equation}
+
+\textbf{Control:}
+\begin{equation}
+\begin{aligned}
+v &= 0 \\
+\omega &= \text{sign}(\theta_{\text{error}}) \cdot \omega_{\max}
+\end{aligned}
+\label{eq:rotate_control}
+\end{equation}
+
+with direction locking applied.
+
+\subsubsection{Mode 3: Forward + Turn}
+
+For moderate heading errors:
+\begin{equation}
+\frac{\tau_{\text{rotate}}}{2} < |\theta_{\text{error}}| \leq \tau_{\text{rotate}}
+\label{eq:forward_turn_condition}
+\end{equation}
+
+\textbf{Control:}
+\begin{equation}
+\begin{aligned}
+v &= v_{\text{base}} \cdot \alpha_{\text{align}} \\
+\omega &= k_p \theta_{\text{error}}
+\end{aligned}
+\label{eq:forward_turn_control}
+\end{equation}
+
+where:
+\begin{equation}
+\alpha_{\text{align}} = \max\left(0.3, 1 - \frac{|\theta_{\text{error}}|}{\tau_{\text{rotate}}}\right)
+\label{eq:alignment_factor}
+\end{equation}
+
+and $k_p = 1.5$ is proportional gain.
+
+\subsection{PINN-Optimized Velocity Selection}
+
+After \acrshort{dwa} selects velocity $(v, \omega)$, query \acrshort{pinn} for energy and stability:
+
+\begin{algorithm}[h]
+\caption{PINN Velocity Optimization}
+\label{alg:pinn_velocity}
+\begin{algorithmic}[1]
+\State Generate trajectory proposal with $(v, \omega)$
+\State Query PINN service: $(E, S) \leftarrow \text{PINN}(\text{trajectory})$
+\If{$E > 50.0$ \textbf{or} $S < 0.7$}
+    \State $v \leftarrow 0.8v$, $\omega \leftarrow 0.8\omega$ \Comment{Reduce speed}
+\ElsIf{$E < 20.0$ \textbf{and} $S > 0.9$}
+    \State $v \leftarrow \min(1.2v, v_{\max})$ \Comment{Increase speed}
+\Else
+    \State Keep $(v, \omega)$ unchanged
+\EndIf
+\State \textbf{return} $(v, \omega)$
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Exception:} For straight paths ($|\Delta y| < 0.05$), bypass \acrshort{pinn} optimization to avoid unnecessary overhead.
+
+\subsection{Algorithm Parameters}
+
+\begin{table}[h]
+\centering
+\caption{DWA Controller Parameters}
+\label{tab:dwa_params}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Unit} \\
+\midrule
+Max linear velocity & 1.0 & m/s \\
+Min linear velocity & 0.05 & m/s \\
+Max angular velocity & 0.7 & rad/s \\
+Acceleration limit & 0.8 & m/s$^2$ \\
+Deceleration limit & 1.2 & m/s$^2$ \\
+Planning horizon & 2.0 & s \\
+Velocity samples & 12 $\times$ 24 & - \\
+Control frequency & 20 & Hz \\
+Emergency stop distance & 0.2 & m \\
+Slow down distance & 0.6 & m \\
+Safe distance & 0.8 & m \\
+Heading proportional gain & 1.5 & - \\
+Max heading rate & 0.6 & rad/s \\
+Rotate threshold (far) & 120 & ° \\
+Rotate threshold (mid) & 90 & ° \\
+Rotate threshold (close) & 60 & ° \\
+Rotation timeout & 5.0 & s \\
+Direction lock duration & 2.0 & s \\
+Min angle for lock & 10 & ° \\
+Free-space update rate & 3.0 & Hz \\
+Free-space min clearance & 0.8 & m \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO: Add Figure 3.8 - DWA velocity space sampling
+% 2D plot showing (v, ω) sample grid with admissible/inadmissible regions
+% Reference: Will be created as figures/dwa_velocity_space.pdf
+
+% TODO: Add Figure 3.9 - Trajectory scoring visualization
+% Show multiple candidate trajectories color-coded by score
+% Reference: Will be created as figures/dwa_trajectories.pdf
+
+\section{System Integration}
+\label{sec:meth_integration}
+
+This section describes how the five components integrate into a cohesive navigation system.
+
+\subsection{ROS 2 Architecture}
+
+The system is implemented as a collection of \acrshort{ros} 2 nodes communicating via topics and services.
+
+\subsubsection{Node Structure}
+
+\begin{enumerate}
+    \item \textbf{ukf\_localization\_node}: Publishes filtered pose and covariance
+    \item \textbf{path\_optimizer\_node}: Publishes global path (1 Hz)
+    \item \textbf{pinn\_service\_node}: Provides energy/stability queries (ROS 2 service)
+    \item \textbf{controller\_node}: Publishes velocity commands (20 Hz)
+    \item \textbf{emergency\_stop\_node}: Safety monitor with override capability
+\end{enumerate}
+
+\subsubsection{Key Topics}
+
+\begin{table}[h]
+\centering
+\caption{ROS 2 Topic Communication}
+\label{tab:ros2_topics}
+\begin{tabular}{lll}
+\toprule
+\textbf{Topic} & \textbf{Message Type} & \textbf{Rate} \\
+\midrule
+/odom & nav\_msgs/Odometry & 20 Hz \\
+/imu/data & sensor\_msgs/Imu & 50 Hz \\
+/scan & sensor\_msgs/LaserScan & 10 Hz \\
+/ukf/pose & geometry\_msgs/PoseWithCovariance & 20 Hz \\
+/global\_path & nav\_msgs/Path & 1 Hz \\
+/cmd\_vel & geometry\_msgs/Twist & 20 Hz \\
+/emergency\_stop & std\_msgs/Bool & 10 Hz \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Service Interfaces}
+
+\begin{itemize}
+    \item \texttt{/pinn/evaluate\_trajectory}: Queries \acrshort{pinn} for energy and stability
+    \begin{itemize}
+        \item \textbf{Request:} Trajectory waypoints (positions, velocities, terrain data)
+        \item \textbf{Response:} Energy (J/m), Stability (0-1)
+        \item \textbf{Timeout:} 2.0 s
+    \end{itemize}
+\end{itemize}
+
+\subsection{Control Loop Timing}
+
+\paragraph{20 Hz Control Loop (50ms)}
+\begin{enumerate}
+    \item Receive UKF pose estimate
+    \item Receive latest global path
+    \item Query current laser scan
+    \item Execute DWA trajectory evaluation
+    \item (Optionally) Query PINN for energy optimization
+    \item Publish velocity command
+\end{enumerate}
+
+\textbf{Typical breakdown:}
+\begin{itemize}
+    \item UKF update: 5ms
+    \item DWA evaluation (288 trajectories): 30ms
+    \item PINN query (if called): 5ms
+    \item Path following logic: 5ms
+    \item Safety checks: 2ms
+    \item \textbf{Total:} $\sim$47ms (within 50ms budget)
+\end{itemize}
+
+\subsection{Failure Modes and Recovery}
+
+\subsubsection{PINN Service Timeout}
+
+If \acrshort{pinn} service exceeds 2.0s timeout:
+\begin{enumerate}
+    \item Use physics-based energy estimate: $E_{\text{fallback}} = 0.5v^2 + 0.2|\omega|$
+    \item Log warning and continue with \acrshort{dwa}-only control
+\end{enumerate}
+
+\subsubsection{Localization Divergence}
+
+If \texttt{trace}($\mat{P}$) $> 10.0$ or NaN detected:
+\begin{enumerate}
+    \item Reset covariance to $\mat{P}_{\text{reset}}$
+    \item Increase process noise temporarily: $\mat{Q} \leftarrow 2\mat{Q}$ for 2 seconds
+    \item Log divergence event
+\end{enumerate}
+
+\subsubsection{Path Optimizer Stuck Detection}
+
+If stuck condition persists for 8 seconds:
+\begin{enumerate}
+    \item Increase exploration factor: $\alpha_{\text{explore}} = 0.6$
+    \item Increase free-space weight: $w_{\text{free}} = 0.5$
+    \item Execute escape maneuver (back up 0.5m, rotate to free-space direction)
+    \item Replan with updated parameters
+\end{enumerate}
+
+\subsection{Parameter Configuration}
+
+System parameters are stored in YAML configuration files:
+\begin{itemize}
+    \item \texttt{config/ukf\_params.yaml}: Covariance matrices, health thresholds
+    \item \texttt{config/optimizer\_params.yaml}: NSGA-II population, objectives weights
+    \item \texttt{config/dwa\_params.yaml}: Velocity limits, scoring weights
+    \item \texttt{config/pinn\_params.yaml}: Model path, timeout, feature normalization
+\end{itemize}
+
+This allows tuning without recompilation.
+
+% TODO: Add Figure 3.10 - System integration diagram
+% Sequence diagram showing one complete control cycle with all nodes
+% Reference: Will be created as figures/system_integration_sequence.pdf
+
+\subsection{Summary}
+
+This chapter presented the complete technical methodology of the \acrshort{piec} framework:
+\begin{itemize}
+    \item \textbf{PINN Surrogate Model:} Physics-informed energy prediction with 6-component decomposition
+    \item \textbf{NSGA-II Optimizer:} Multi-objective path planning with 7 objectives
+    \item \textbf{UKF Localization:} 5D state estimation with health monitoring and IMU calibration
+    \item \textbf{Adaptive DWA:} Local control with free-space awareness and anti-oscillation
+    \item \textbf{System Integration:} ROS 2 architecture with failure recovery
+\end{itemize}
+
+The next chapter discusses implementation details including simulation environment, real robot platform, and software architecture.
+

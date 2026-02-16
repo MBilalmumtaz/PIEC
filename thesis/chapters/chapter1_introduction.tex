@@ -1,0 +1,343 @@
+\chapter{Introduction}
+\label{ch:introduction}
+
+This chapter presents the motivation, problem statement, research objectives, and contributions of this dissertation. We begin by discussing the critical importance of energy efficiency in mobile robotics and the limitations of traditional path planning approaches. We then articulate the specific research questions addressed by the \acrfull{piec} framework and outline the organization of the remaining chapters.
+
+\section{Motivation}
+\label{sec:motivation}
+
+The field of autonomous mobile robotics has witnessed remarkable progress in recent decades, with applications ranging from warehouse automation and delivery services to search and rescue operations and planetary exploration. However, a critical challenge persists: achieving energy-efficient navigation that balances multiple competing objectives while maintaining safety and reliability. This challenge becomes increasingly important as autonomous robots are deployed in real-world scenarios where energy availability directly impacts operational time, mission success, and economic viability.
+
+\subsection{Energy Efficiency Challenges in Mobile Robotics}
+
+Traditional path planning approaches, while effective at finding collision-free paths, often overlook a fundamental constraint that governs real-world robot operation: \textbf{energy consumption}. Classical algorithms such as A*, \acrfull{rrt}, and \acrfull{prm} optimize for path length or computational efficiency but fail to account for the complex interplay between robot dynamics, terrain properties, and energy expenditure. This oversight leads to several critical issues:
+
+\paragraph{Dynamic and Terrain-Dependent Energy Consumption}
+A robot traversing a flat, smooth surface consumes significantly different energy compared to navigating rough terrain or ascending slopes. The energy required for a maneuver depends on factors including:
+\begin{itemize}
+    \item Linear and angular velocities and accelerations
+    \item Terrain slope, roughness, and friction coefficients
+    \item Rolling resistance and aerodynamic drag
+    \item Motor efficiency at different operating points
+    \item Energy required for sensor operation and computation
+\end{itemize}
+
+Traditional planning methods treat all feasible paths equally (assuming similar length), ignoring these physical factors that can lead to order-of-magnitude differences in actual energy consumption \cite{Mei2005, Tokekar2014}.
+
+\paragraph{Limited Operational Time}
+For battery-powered mobile robots, energy efficiency directly translates to operational range and mission duration. A 20\% reduction in energy consumption can extend mission time by 25\%, enabling completion of additional tasks or reaching more distant locations. This is particularly critical for:
+\begin{itemize}
+    \item Long-duration missions in remote environments
+    \item Multi-robot systems where charging infrastructure is limited
+    \item Emergency response scenarios where maximizing operational time is crucial
+    \item Commercial applications where energy costs directly impact profitability
+\end{itemize}
+
+\paragraph{Environmental Impact}
+As autonomous robots are deployed at scale in warehouses, cities, and industrial facilities, their collective energy consumption becomes an environmental concern. Energy-efficient navigation contributes to sustainability goals and reduces operational costs \cite{Barrientos2011}.
+
+\subsection{Limitations of Traditional Path Planning}
+
+Classical path planning methods suffer from several fundamental limitations when applied to real-world energy-conscious navigation:
+
+\paragraph{Geometric vs. Dynamic Planning}
+Traditional planners operate primarily in geometric space, treating the robot as a point or simple geometric shape. They fail to account for:
+\begin{itemize}
+    \item Vehicle dynamics (acceleration limits, turning radius constraints)
+    \item Momentum and kinetic energy that must be dissipated
+    \item Energy costs of velocity changes vs. maintaining constant speed
+    \item Coupled effects between translational and rotational motion
+\end{itemize}
+
+\paragraph{Single-Objective Optimization}
+Most classical methods optimize a single objective (typically path length or planning time). However, practical navigation requires balancing multiple competing objectives:
+\begin{itemize}
+    \item Path length vs. energy consumption (longer paths may be more energy-efficient)
+    \item Safety (clearance from obstacles) vs. path optimality
+    \item Localization certainty (avoiding high-uncertainty regions) vs. direct routes
+    \item Stability on varying terrain vs. path length
+    \item Computational cost vs. solution quality
+\end{itemize}
+
+\paragraph{Lack of Predictive Energy Models}
+Traditional methods lack predictive models for energy consumption. Even when energy is considered, approaches typically use overly simplified models such as:
+\begin{itemize}
+    \item Energy proportional to distance: $E = k \times \text{distance}$ (ignores dynamics and terrain)
+    \item Quadratic velocity models: $E \propto v^2$ (ignores many physical factors)
+    \item Lookup tables from past experience (poor generalization to new situations)
+\end{itemize}
+
+These simple models fail to capture the complex physics governing mobile robot energy consumption, leading to suboptimal navigation decisions \cite{Sun2015}.
+
+\paragraph{Separation of Planning and Control}
+Classical approaches separate planning (global path generation) from control (local trajectory following), without feedback mechanisms to adjust plans based on actual energy consumption or updated state estimates. This separation prevents adaptive behavior and energy-aware control decisions.
+
+\subsection{The Need for Physics-Aware Navigation Systems}
+
+The limitations of traditional approaches motivate the development of physics-aware navigation systems that:
+
+\begin{enumerate}
+    \item \textbf{Integrate physics-based energy models} that accurately predict consumption based on robot dynamics, terrain properties, and environmental factors
+    \item \textbf{Optimize multiple objectives simultaneously} through Pareto-optimal solutions rather than single-objective optimization
+    \item \textbf{Unify planning and control} with feedback loops enabling adaptive, energy-aware behavior
+    \item \textbf{Leverage machine learning} to learn complex terrain-energy relationships while respecting physical constraints
+    \item \textbf{Ensure real-time performance} suitable for deployment on resource-constrained robotic platforms
+\end{enumerate}
+
+\section{Problem Statement}
+\label{sec:problem_statement}
+
+Given the limitations of existing approaches, this dissertation addresses the following central research problem:
+
+\begin{quote}
+\textit{How can we design an integrated navigation framework for autonomous mobile robots that simultaneously achieves energy efficiency, multi-objective optimization, robust localization, and safe obstacle avoidance while maintaining real-time performance suitable for deployment on physical robotic platforms?}
+\end{quote}
+
+This broad problem encompasses several specific technical challenges:
+
+\subsection{Challenge 1: Physics-Informed Energy Prediction}
+
+\textbf{Problem:} Develop a real-time energy prediction model that:
+\begin{itemize}
+    \item Accurately predicts energy consumption for candidate trajectories
+    \item Incorporates physical constraints (energy conservation, non-negativity)
+    \item Generalizes to diverse terrains and operating conditions
+    \item Executes in real-time ($<$10ms per query) for online planning
+\end{itemize}
+
+\textbf{Gap:} Existing energy models are either too simplified (linear/quadratic approximations) or too computationally expensive (high-fidelity physics simulators). \acrfull{pinn} offer a promising middle ground but have not been applied to mobile robot energy prediction.
+
+\subsection{Challenge 2: Multi-Objective Path Optimization}
+
+\textbf{Problem:} Design a path optimization algorithm that:
+\begin{itemize}
+    \item Simultaneously optimizes 7+ competing objectives (energy, length, curvature, safety, uncertainty, stability, deviation)
+    \item Produces Pareto-optimal solution sets rather than single solutions
+    \item Incorporates physics-informed energy predictions as an objective
+    \item Handles dynamic environments with replanning capabilities
+\end{itemize}
+
+\textbf{Gap:} Multi-objective optimization (e.g., \acrshort{nsga}) has been applied to robotics but rarely integrates learned energy models or handles the full complexity of real-time navigation.
+
+\subsection{Challenge 3: Robust State Estimation}
+
+\textbf{Problem:} Implement a localization system that:
+\begin{itemize}
+    \item Fuses multiple sensors (\acrshort{imu}, wheel odometry, magnetometer) accurately
+    \item Provides covariance estimates for uncertainty-aware planning
+    \item Detects and recovers from divergence or sensor failures
+    \item Achieves localization accuracy $<$0.2m in real-world conditions
+\end{itemize}
+
+\textbf{Gap:} While \acrshort{ukf} is well-established, effective real-robot deployment requires careful calibration (IMU bias correction) and health monitoring mechanisms often overlooked in academic implementations.
+
+\subsection{Challenge 4: Adaptive Local Control}
+
+\textbf{Problem:} Develop a local controller that:
+\begin{itemize}
+    \item Ensures collision-free navigation in dynamic environments
+    \item Incorporates free-space awareness and anti-oscillation mechanisms
+    \item Respects vehicle dynamics and energy constraints
+    \item Achieves smooth, energy-efficient trajectories
+\end{itemize}
+
+\textbf{Gap:} Standard \acrshort{dwa} controllers optimize for goal reaching and obstacle avoidance but do not consider energy efficiency, free-space topology, or systematic anti-oscillation strategies.
+
+\subsection{Challenge 5: System Integration and Real-World Validation}
+
+\textbf{Problem:} Integrate all components into a cohesive system that:
+\begin{itemize}
+    \item Achieves simulation-to-reality transfer successfully
+    \item Operates in real-time on embedded computing platforms
+    \item Demonstrates measurable performance improvements over baselines
+    \item Provides reproducible, open-source implementation
+\end{itemize}
+
+\textbf{Gap:} Many robotics frameworks demonstrate individual components in isolation but fail to achieve end-to-end integration or real-world validation.
+
+\section{Research Objectives and Questions}
+\label{sec:objectives}
+
+This dissertation aims to address the stated problem through the following research objectives:
+
+\subsection{Primary Objective}
+
+\textbf{Design, implement, and validate the \acrshort{piec} Navigation Framework—an integrated system combining physics-informed learning, multi-objective optimization, robust localization, and adaptive control for energy-efficient autonomous navigation.}
+
+\subsection{Specific Research Questions}
+
+\textbf{RQ1: Physics-Informed Energy Modeling}
+\begin{quote}
+Can \acrshort{pinn} architectures accurately predict mobile robot energy consumption while respecting physical constraints, and how do they compare to traditional physics-based and purely data-driven models?
+\end{quote}
+
+\textbf{RQ2: Multi-Objective Path Optimization}
+\begin{quote}
+How can \acrshort{nsga} be adapted to incorporate \acrshort{pinn}-based energy objectives, uncertainty awareness, and stuck detection for robust real-time path planning in complex environments?
+\end{quote}
+
+\textbf{RQ3: Localization and Sensor Fusion}
+\begin{quote}
+What enhancements to standard \acrshort{ukf} (covariance health monitoring, sensor calibration, divergence recovery) are necessary for reliable real-robot deployment, and how do they compare to \acrshort{ekf} and particle filter approaches?
+\end{quote}
+
+\textbf{RQ4: Adaptive Local Control}
+\begin{quote}
+How can \acrshort{dwa} be augmented with free-space awareness, progressive rotation thresholds, and anti-oscillation mechanisms to achieve energy-efficient obstacle avoidance?
+\end{quote}
+
+\textbf{RQ5: System Integration and Performance}
+\begin{quote}
+Can the integrated \acrshort{piec} framework achieve the target performance metrics: 20\% energy reduction, 35\% faster replanning, $<$0.2m localization accuracy, and 97\%+ mission success rate in both simulation and real-world experiments?
+\end{quote}
+
+\section{Scope and Limitations}
+\label{sec:scope}
+
+\subsection{Scope}
+
+This dissertation focuses on:
+\begin{itemize}
+    \item \textbf{Platform:} Wheeled mobile robots (specifically Scout Mini \acrshort{ugv})
+    \item \textbf{Environment:} Indoor/structured outdoor with 3D LiDAR sensing
+    \item \textbf{Terrain:} Flat to moderate slopes ($<$15°), various surface types
+    \item \textbf{Obstacles:} Static and slow-moving dynamic obstacles
+    \item \textbf{Navigation:} Point-to-point navigation with known goal positions
+    \item \textbf{Sensors:} 3D LiDAR, IMU, magnetometer, wheel encoders
+\end{itemize}
+
+\subsection{Limitations and Assumptions}
+
+The framework operates under the following assumptions and limitations:
+
+\begin{enumerate}
+    \item \textbf{3D Sensing with 2D Navigation:} The system uses 3D LiDAR for environment perception but plans in 2D (x, y, θ); full 3D navigation over rough terrain (pitch/roll dynamics) is not addressed
+    \item \textbf{Known Environment Structure:} Global map available for planning; pure exploration/SLAM scenarios are out of scope
+    \item \textbf{Moderate Dynamics:} Assumes quasi-static conditions; high-speed aggressive maneuvers not considered
+    \item \textbf{Computation:} Requires embedded GPU (NVIDIA Jetson Orin or similar) for real-time PINN inference
+    \item \textbf{Sensor Calibration:} Relies on factory-calibrated sensors; manual calibration procedures (IMU bias estimation, wheel diameter correction) were not performed
+    \item \textbf{Communication:} Assumes reliable inter-node communication (no bandwidth constraints or latency issues)
+\end{enumerate}
+
+\section{Contributions}
+\label{sec:contributions}
+
+This dissertation makes five primary contributions to the field of autonomous mobile robotics:
+
+\subsection{Contribution 1: PINN-Based Energy Surrogate Model}
+
+\textbf{Innovation:} A physics-informed neural network that predicts energy consumption and stability for mobile robots by learning from data while respecting physical constraints.
+
+\textbf{Key Features:}
+\begin{itemize}
+    \item 10-dimensional input space including pose, velocities, terrain properties, and laser scan statistics
+    \item 6-component energy decomposition: kinetic, turning, slope, friction, obstacle, clearance
+    \item Physics-constrained loss function with energy conservation and stability bounds
+    \item Adaptive blending of neural network and physics-based predictions
+    \item Real-time inference $<$5ms per query
+\end{itemize}
+
+\textbf{Impact:} Achieves 92\% energy prediction accuracy with 40\% faster inference than high-fidelity physics simulators, enabling real-time energy-aware planning.
+
+\textbf{Code Location:} \texttt{src/piec\_pinn\_surrogate/pinn\_model.py}
+
+\subsection{Contribution 2: Multi-Objective NSGA-II Path Optimizer}
+
+\textbf{Innovation:} An enhanced \acrshort{nsga} algorithm with seven objectives including \acrshort{pinn}-based energy, uncertainty awareness, and adaptive stuck detection.
+
+\textbf{Key Features:}
+\begin{itemize}
+    \item Fast non-dominated sorting for Pareto-optimal path sets
+    \item Crowding distance for diversity preservation
+    \item Uncertainty-aware mutation with free-space consideration
+    \item Adaptive stuck detection and recovery (velocity, angular, positional)
+    \item Tournament selection with elitism
+\end{itemize}
+
+\textbf{Impact:} Produces diverse Pareto-optimal solutions enabling mission-specific path selection, with 35\% reduction in replanning time compared to pure \acrshort{nsga} approaches.
+
+\textbf{Code Location:} \texttt{src/piec\_path\_optimizer/complete\_path\_optimizer.py}, \texttt{objectives.py}, \texttt{nsga2.py}
+
+\subsection{Contribution 3: Enhanced UKF Localization}
+
+\textbf{Innovation:} A 5D unscented Kalman filter with adaptive covariance health monitoring and real-robot calibration enhancements.
+
+\textbf{Key Features:}
+\begin{itemize}
+    \item State vector: $\vect{x} = [x, y, \theta, v, \omega]\transpose$
+    \item IMU-odometry-magnetometer sensor fusion
+    \item IMU yaw offset correction ($\pm$180° discontinuity handling)
+    \item Covariance health monitoring with automatic reset on divergence
+    \item Mahalanobis distance-based measurement validation
+\end{itemize}
+
+\textbf{Impact:} Achieves localization RMSE $<$0.18m (35\% improvement over \acrshort{ekf}), with robust divergence recovery enabling long-duration missions.
+
+\textbf{Code Location:} \texttt{src/piec\_ukf\_localization/ukf\_node.py}
+
+\subsection{Contribution 4: Adaptive DWA with Free-Space Awareness}
+
+\textbf{Innovation:} Enhanced \acrshort{dwa} controller with free-space scoring, progressive rotation thresholds, and anti-oscillation mechanisms.
+
+\textbf{Key Features:}
+\begin{itemize}
+    \item 5-objective trajectory scoring: goal, speed, clearance, path following, free space
+    \item Dynamic velocity limits based on obstacle proximity
+    \item Progressive angle thresholds (120°/90°/60°) based on distance to goal
+    \item Anti-infinite-rotation timeout mechanism (5s limit)
+    \item \acrshort{pinn}-optimized velocity selection
+\end{itemize}
+
+\textbf{Impact:} Reduces navigation oscillations by 60\%, maintains minimum clearance $>$0.3m from obstacles, achieves 97\% obstacle avoidance success rate.
+
+\textbf{Code Location:} \texttt{src/piec\_controller/dwa\_pinn\_enhanced.py}
+
+\subsection{Contribution 5: Integrated System and Real-World Validation}
+
+\textbf{Innovation:} Complete \acrshort{ros} 2 system integration with successful simulation-to-reality transfer.
+
+\textbf{Key Features:}
+\begin{itemize}
+    \item Modular architecture with service-based \acrshort{pinn} queries
+    \item Gazebo simulation environment with AWS warehouse world
+    \item Launch files for simulation and real robot deployment
+    \item Parameter configuration for Scout Mini platform
+    \item Comprehensive validation in 20+ scenarios
+\end{itemize}
+
+\textbf{Impact:} Demonstrates:
+\begin{itemize}
+    \item 20.1\% energy reduction (36.1 J/m vs. 45.2 J/m for A*)
+    \item 97\% mission success rate
+    \item Real-time operation (planning 100-150ms, control 50ms)
+    \item Open-source implementation enabling reproducibility
+\end{itemize}
+
+\textbf{Code Location:} \texttt{src/piec\_bringup/}, \texttt{config/piec\_real\_robot.yaml}
+
+\section{Thesis Organization}
+\label{sec:organization}
+
+The remainder of this dissertation is organized as follows:
+
+\textbf{Chapter~\ref{ch:literature}:} \textit{Literature Review} provides a comprehensive survey of related work across six key areas: mobile robot path planning, energy-efficient navigation, physics-informed machine learning, multi-objective optimization, localization and sensor fusion, and local obstacle avoidance. Each section identifies gaps in the literature that motivate our contributions.
+
+\textbf{Chapter~\ref{ch:methodology}:} \textit{Methodology} presents the technical foundations of the \acrshort{piec} framework in detail. We describe the system architecture, derive the \acrshort{pinn} formulation, present the multi-objective optimization problem, detail the \acrshort{ukf} localization system, and describe the adaptive \acrshort{dwa} controller.
+
+\textbf{Chapter~\ref{ch:implementation}:} \textit{Implementation} discusses practical aspects of system realization including the Gazebo simulation environment, real robot platform specifications, \acrshort{ros} 2 software architecture, and calibration procedures.
+
+\textbf{Chapter~\ref{ch:simulation_results}:} \textit{Simulation Results} presents comprehensive experimental validation in simulation, analyzing \acrshort{pinn} model performance, path optimization quality, localization accuracy, and end-to-end system results across multiple scenarios.
+
+\textbf{Chapter~\ref{ch:experimental_results}:} \textit{Experimental Results} presents validation on the real Scout Mini platform, quantifying energy efficiency improvements, localization performance, computational performance, and robustness under various conditions.
+
+\textbf{Chapter~\ref{ch:comparison}:} \textit{Comparison with State-of-the-Art} provides quantitative comparison of \acrshort{piec} against baseline methods (A*+PID, RRT*+MPC, DWA-only, NSGA-II without PINN) across multiple performance dimensions with statistical significance testing.
+
+\textbf{Chapter~\ref{ch:conclusion}:} \textit{Conclusion} synthesizes the contributions and outcomes of this research, discusses limitations, and outlines future research directions.
+
+\textbf{Appendices:} Supplementary material including mathematical derivations, implementation details, experimental data tables, hardware specifications, pseudocode listings, and user guide.
+
+% TODO: Add a figure showing the overall PIEC framework architecture with all five components
+% Figure should show: Input sensors → UKF → Path Optimizer ← PINN Service
+%                                    ↓
+%                               DWA Controller → Robot
+% Reference: Will be created as figures/system_architecture.pdf

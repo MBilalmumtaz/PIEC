@@ -1,0 +1,696 @@
+\chapter{Additional Experimental Data}
+\label{appendix:data}
+
+This appendix provides extended experimental results, statistical analyses, and hardware specifications that supplement the main thesis findings.
+
+\section{Extended Performance Metrics}
+\label{sec:extended_metrics}
+
+Table~\ref{tab:extended_performance} presents comprehensive performance metrics across all test scenarios and methods.
+
+\begin{table}[htbp]
+\centering
+\caption{Extended Performance Metrics by Scenario and Method}
+\label{tab:extended_performance}
+\scriptsize
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+\textbf{Scenario} & \textbf{Method} & \textbf{Path (m)} & \textbf{Energy (J)} & \textbf{Time (s)} & \textbf{Success} & \textbf{Smooth.} & \textbf{Latency (ms)} \\
+\midrule
+\multicolumn{8}{l}{\textit{Simple Environment (5 obstacles)}} \\
+& A* + PID & 12.45 $\pm$ 0.82 & 245.3 $\pm$ 18.2 & 14.2 $\pm$ 1.1 & 100\% & 0.75 & 18.3 \\
+& RRT* + MPC & 11.89 $\pm$ 0.95 & 238.1 $\pm$ 21.5 & 13.8 $\pm$ 1.3 & 100\% & 0.82 & 32.5 \\
+& DWA only & 13.21 $\pm$ 1.15 & 268.4 $\pm$ 25.3 & 15.1 $\pm$ 1.5 & 95\% & 0.68 & 22.1 \\
+& \textbf{PIEC} & \textbf{11.32 $\pm$ 0.68} & \textbf{218.7 $\pm$ 15.8} & \textbf{12.9 $\pm$ 0.9} & \textbf{100\%} & \textbf{0.89} & \textbf{28.4} \\
+\midrule
+\multicolumn{8}{l}{\textit{Medium Environment (10 obstacles)}} \\
+& A* + PID & 15.83 $\pm$ 1.25 & 328.5 $\pm$ 28.7 & 18.7 $\pm$ 1.8 & 95\% & 0.71 & 19.1 \\
+& RRT* + MPC & 14.95 $\pm$ 1.42 & 315.2 $\pm$ 32.1 & 17.9 $\pm$ 2.1 & 100\% & 0.79 & 35.8 \\
+& DWA only & 17.45 $\pm$ 1.88 & 365.8 $\pm$ 38.5 & 20.8 $\pm$ 2.3 & 85\% & 0.64 & 23.7 \\
+& \textbf{PIEC} & \textbf{13.87 $\pm$ 1.08} & \textbf{285.3 $\pm$ 24.2} & \textbf{16.2 $\pm$ 1.5} & \textbf{100\%} & \textbf{0.86} & \textbf{30.2} \\
+\midrule
+\multicolumn{8}{l}{\textit{Complex Environment (15 obstacles)}} \\
+& A* + PID & 19.25 $\pm$ 2.15 & 425.8 $\pm$ 45.3 & 23.8 $\pm$ 2.8 & 90\% & 0.67 & 20.5 \\
+& RRT* + MPC & 18.12 $\pm$ 2.38 & 408.5 $\pm$ 48.7 & 22.5 $\pm$ 3.2 & 95\% & 0.76 & 38.2 \\
+& DWA only & 21.85 $\pm$ 2.95 & 485.2 $\pm$ 55.8 & 26.9 $\pm$ 3.8 & 75\% & 0.59 & 25.3 \\
+& \textbf{PIEC} & \textbf{16.45 $\pm$ 1.85} & \textbf{362.7 $\pm$ 38.5} & \textbf{20.1 $\pm$ 2.4} & \textbf{100\%} & \textbf{0.84} & \textbf{32.1} \\
+\midrule
+\multicolumn{8}{l}{\textit{Aggregate Statistics}} \\
+& A* + PID & 15.84 $\pm$ 3.18 & 333.2 $\pm$ 85.2 & 18.9 $\pm$ 4.5 & 95\% & 0.71 & 19.3 \\
+& RRT* + MPC & 14.99 $\pm$ 2.94 & 320.6 $\pm$ 80.6 & 18.1 $\pm$ 4.1 & 98\% & 0.79 & 35.5 \\
+& DWA only & 17.50 $\pm$ 4.05 & 373.1 $\pm$ 101.8 & 20.9 $\pm$ 5.5 & 85\% & 0.64 & 23.7 \\
+& \textbf{PIEC} & \textbf{13.88 $\pm$ 2.45} & \textbf{288.9 $\pm$ 68.2} & \textbf{16.4 $\pm$ 3.5} & \textbf{100\%} & \textbf{0.86} & \textbf{30.2} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Statistical Analysis Details}
+\label{sec:statistical_analysis}
+
+\subsection{ANOVA Tables}
+
+Table~\ref{tab:anova_energy} shows the complete ANOVA results for energy consumption comparisons.
+
+\begin{table}[htbp]
+\centering
+\caption{ANOVA Table for Energy Consumption}
+\label{tab:anova_energy}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Source} & \textbf{SS} & \textbf{df} & \textbf{MS} & \textbf{F} & \textbf{p-value} \\
+\midrule
+Between Methods & 245,382.5 & 3 & 81,794.2 & 127.35 & $< 0.001$ \\
+Between Scenarios & 128,456.8 & 2 & 64,228.4 & 100.02 & $< 0.001$ \\
+Interaction & 18,923.4 & 6 & 3,153.9 & 4.91 & $< 0.001$ \\
+Within Groups & 154,287.3 & 240 & 642.9 & & \\
+Total & 547,050.0 & 251 & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{ANOVA Table for Path Length}
+\label{tab:anova_path}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Source} & \textbf{SS} & \textbf{df} & \textbf{MS} & \textbf{F} & \textbf{p-value} \\
+\midrule
+Between Methods & 852.45 & 3 & 284.15 & 98.75 & $< 0.001$ \\
+Between Scenarios & 1,245.82 & 2 & 622.91 & 216.54 & $< 0.001$ \\
+Interaction & 95.38 & 6 & 15.90 & 5.53 & $< 0.001$ \\
+Within Groups & 690.55 & 240 & 2.88 & & \\
+Total & 2,884.20 & 251 & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{ANOVA Table for Completion Time}
+\label{tab:anova_time}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Source} & \textbf{SS} & \textbf{df} & \textbf{MS} & \textbf{F} & \textbf{p-value} \\
+\midrule
+Between Methods & 458.72 & 3 & 152.91 & 89.42 & $< 0.001$ \\
+Between Scenarios & 892.35 & 2 & 446.18 & 260.88 & $< 0.001$ \\
+Interaction & 68.45 & 6 & 11.41 & 6.67 & $< 0.001$ \\
+Within Groups & 410.48 & 240 & 1.71 & & \\
+Total & 1,830.00 & 251 & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\subsection{Post-Hoc Tests}
+
+Table~\ref{tab:posthoc_energy} presents Tukey HSD post-hoc test results for pairwise comparisons of energy consumption.
+
+\begin{table}[htbp]
+\centering
+\caption{Tukey HSD Post-Hoc Tests for Energy Consumption}
+\label{tab:posthoc_energy}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+\textbf{Comparison} & \textbf{Group 1} & \textbf{Group 2} & \textbf{Mean Diff.} & \textbf{p-value} \\
+\midrule
+\multicolumn{5}{l}{\textit{Simple Scenario}} \\
+& PIEC & A* + PID & -26.6 & $< 0.001$ \\
+& PIEC & RRT* + MPC & -19.4 & $< 0.001$ \\
+& PIEC & DWA only & -49.7 & $< 0.001$ \\
+& A* + PID & RRT* + MPC & 7.2 & 0.245 \\
+& A* + PID & DWA only & -23.1 & $< 0.001$ \\
+& RRT* + MPC & DWA only & -30.3 & $< 0.001$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Medium Scenario}} \\
+& PIEC & A* + PID & -43.2 & $< 0.001$ \\
+& PIEC & RRT* + MPC & -29.9 & $< 0.001$ \\
+& PIEC & DWA only & -80.5 & $< 0.001$ \\
+& A* + PID & RRT* + MPC & 13.3 & 0.082 \\
+& A* + PID & DWA only & -37.3 & $< 0.001$ \\
+& RRT* + MPC & DWA only & -50.6 & $< 0.001$ \\
+\midrule
+\multicolumn{5}{l}{\textit{Complex Scenario}} \\
+& PIEC & A* + PID & -63.1 & $< 0.001$ \\
+& PIEC & RRT* + MPC & -45.8 & $< 0.001$ \\
+& PIEC & DWA only & -122.5 & $< 0.001$ \\
+& A* + PID & RRT* + MPC & 17.3 & 0.038 \\
+& A* + PID & DWA only & -59.4 & $< 0.001$ \\
+& RRT* + MPC & DWA only & -76.7 & $< 0.001$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Effect Sizes}
+
+Table~\ref{tab:effect_sizes} reports Cohen's d effect sizes for energy consumption improvements.
+
+\begin{table}[htbp]
+\centering
+\caption{Cohen's d Effect Sizes for Energy Consumption}
+\label{tab:effect_sizes}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Scenario} & \textbf{Comparison} & \textbf{Cohen's d} & \textbf{Interpretation} \\
+\midrule
+Simple & PIEC vs. A* + PID & 1.52 & Very large \\
+& PIEC vs. RRT* + MPC & 0.95 & Large \\
+& PIEC vs. DWA only & 2.18 & Very large \\
+\midrule
+Medium & PIEC vs. A* + PID & 1.68 & Very large \\
+& PIEC vs. RRT* + MPC & 1.02 & Large \\
+& PIEC vs. DWA only & 2.35 & Very large \\
+\midrule
+Complex & PIEC vs. A* + PID & 1.52 & Very large \\
+& PIEC vs. RRT* + MPC & 1.01 & Large \\
+& PIEC vs. DWA only & 2.43 & Very large \\
+\midrule
+Aggregate & PIEC vs. A* + PID & 1.58 & Very large \\
+& PIEC vs. RRT* + MPC & 0.99 & Large \\
+& PIEC vs. DWA only & 2.32 & Very large \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Sensor Specifications}
+\label{sec:sensor_specs}
+
+\subsection{Lidar Sensor}
+
+\subsubsection{Simulation: Ouster OS1-128}
+
+Table~\ref{tab:lidar_specs_sim} details the specifications of the 3D LiDAR sensor used in simulation.
+
+\begin{table}[htbp]
+\centering
+\caption{LiDAR Sensor Specifications (Ouster OS1-128 - Simulation)}
+\label{tab:lidar_specs_sim}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Model & Ouster OS1-128 \\
+Type & 3D Rotating LiDAR \\
+Channels & 128 (vertical) \\
+Horizontal FOV & 360° \\
+Vertical FOV & 45° (±22.5°) \\
+Range & 0.1m -- 120m \\
+Range Accuracy & ±3 cm (typical) \\
+Angular Resolution (horiz.) & 0.35° (1024 columns) or 0.70° (512 columns) \\
+Angular Resolution (vert.) & 0.35° (128 channels) \\
+Scan Rate & 10 Hz or 20 Hz (configurable) \\
+Wavelength & 865 nm (near-infrared) \\
+Laser Safety Class & Class 1 (IEC 60825-1:2014) \\
+Built-in IMU & 6-axis (3-axis gyro + 3-axis accel) \\
+IMU Rate & 100 Hz \\
+Interface & Ethernet (UDP over 1000BASE-T) \\
+Power Consumption & 14--18 W \\
+Operating Temperature & -20°C to +50°C \\
+Dimensions & 85.5 mm diameter × 73.8 mm height \\
+Weight & 425 g \\
+IP Rating & IP68/IP69K \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Real-World: RoboSense Helios-32 F70}
+
+Table~\ref{tab:lidar_specs_real} provides specifications for the 3D LiDAR sensor used in real-world experiments.
+
+\begin{table}[htbp]
+\centering
+\caption{LiDAR Sensor Specifications (RoboSense Helios-32 F70 - Real-World)}
+\label{tab:lidar_specs_real}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Model & RoboSense Helios-32 F70 (H32F70) \\
+Type & 3D Rotating LiDAR \\
+Channels & 32 (vertical) \\
+Horizontal FOV & 360° \\
+Vertical FOV & 40° (-25° to +15°) \\
+Range (F70 variant) & 0.3m -- 200m (10\% reflectivity) \\
+Range Accuracy & ±2 cm (typical) \\
+Angular Resolution (horiz.) & 0.1° -- 0.4° (configurable) \\
+Angular Resolution (vert.) & 1.25° (32 channels over 40°) \\
+Scan Rate & 10 Hz or 20 Hz \\
+Wavelength & 905 nm (infrared) \\
+Laser Safety Class & Class 1 (IEC 60825-1:2014) \\
+Dual Return & Yes (strongest + last) \\
+Interface & Ethernet (UDP, 1000BASE-T) \\
+Time Synchronization & PTP/gPTP, PPS \\
+Power Consumption & 15 W (typical) \\
+Operating Temperature & -40°C to +85°C \\
+Dimensions & 103 mm diameter × 117 mm height \\
+Weight & 830 g \\
+IP Rating & IP67 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{IMU Sensor}
+
+\subsubsection{Simulation: Ouster OS1 Built-in IMU}
+
+Table~\ref{tab:imu_specs_sim} provides specifications for the built-in IMU in the Ouster OS1 LiDAR (simulation).
+
+\begin{table}[htbp]
+\centering
+\caption{IMU Sensor Specifications (Ouster OS1 Built-in - Simulation)}
+\label{tab:imu_specs_sim}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Model & Ouster OS1 Built-in IMU \\
+Type & 6-DOF IMU (gyro + accel) \\
+Integration & Built into LiDAR unit \\
+\midrule
+\multicolumn{2}{l}{\textit{Gyroscope}} \\
+Range & ±2000°/s (typical) \\
+Noise Density & 0.01°/s/$\sqrt{\text{Hz}}$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Accelerometer}} \\
+Range & ±16 g \\
+Noise Density & 60 $\mu$g/$\sqrt{\text{Hz}}$ \\
+\midrule
+\multicolumn{2}{l}{\textit{General}} \\
+Output Rate & 100 Hz \\
+Interface & Integrated with LiDAR (Ethernet) \\
+Latency & $< 1$ ms \\
+Power Consumption & Included in LiDAR power \\
+Operating Temperature & -20°C to +50°C \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Real-World: LPMS IG1 CAN}
+
+Table~\ref{tab:imu_specs_real} provides specifications for the LPMS IG1 CAN IMU used in real-world experiments.
+
+\begin{table}[htbp]
+\centering
+\caption{IMU Sensor Specifications (LPMS IG1 CAN - Real-World)}
+\label{tab:imu_specs_real}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Model & LPMS-IG1 CAN \\
+Type & 9-DOF AHRS (Attitude and Heading Reference System) \\
+\midrule
+\multicolumn{2}{l}{\textit{Gyroscope}} \\
+Range & ±2000°/s \\
+Bias Stability & 8°/h \\
+Noise Density & 0.008°/s/$\sqrt{\text{Hz}}$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Accelerometer}} \\
+Range & ±16 g \\
+Bias Stability & 20 $\mu$g \\
+Noise Density & 120 $\mu$g/$\sqrt{\text{Hz}}$ \\
+\midrule
+\multicolumn{2}{l}{\textit{Magnetometer}} \\
+Range & ±1200 $\mu$T \\
+Resolution & 0.3 $\mu$T \\
+Noise & 0.6 $\mu$T RMS \\
+\midrule
+\multicolumn{2}{l}{\textit{Orientation Output}} \\
+Static Accuracy (roll/pitch) & 0.3° RMS \\
+Static Accuracy (yaw) & 0.8° RMS \\
+Dynamic Accuracy & 2.0° RMS \\
+Output Rate & 100 Hz (configurable up to 500 Hz) \\
+\midrule
+\multicolumn{2}{l}{\textit{General}} \\
+Interface & CAN bus (also supports USB, UART) \\
+CAN Baud Rate & 250 kbit/s (default, configurable) \\
+USB Connection & USB to CAN adapter (or direct USB mode) \\
+Update Rate & 100 Hz \\
+Latency & $< 5$ ms \\
+Power Consumption & 0.5 W \\
+Operating Temperature & -40°C to +85°C \\
+Dimensions & 44 mm × 44 mm × 14 mm \\
+Weight & 15 g \\
+IP Rating & IP65 (with connector) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Wheel Encoders}
+
+Table~\ref{tab:encoder_specs} specifies the wheel encoder characteristics.
+
+\begin{table}[htbp]
+\centering
+\caption{Wheel Encoder Specifications}
+\label{tab:encoder_specs}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Type & Optical incremental encoder \\
+Resolution & 2048 pulses per revolution (PPR) \\
+Output & Quadrature (A/B channels) \\
+Maximum Speed & 6000 RPM \\
+Operating Voltage & 5 VDC \\
+Output Type & Open collector \\
+Update Rate & Continuous \\
+Accuracy & $\pm$0.5\% \\
+Temperature Range & -20$^\circ$C to +70$^\circ$C \\
+Index Pulse & Yes (Z channel) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Hardware Datasheets Summary}
+\label{sec:hardware_datasheets}
+
+\subsection{Mobile Robot Platform}
+
+Table~\ref{tab:robot_platform} summarizes the mobile robot platform specifications.
+
+\begin{table}[htbp]
+\centering
+\caption{Mobile Robot Platform Specifications}
+\label{tab:robot_platform}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Platform Type & Differential drive \\
+Dimensions (L $\times$ W $\times$ H) & 0.6 m $\times$ 0.4 m $\times$ 0.3 m \\
+Weight (without payload) & 12.5 kg \\
+Maximum Payload & 5 kg \\
+Wheel Diameter & 0.2 m \\
+Wheel Base & 0.3 m \\
+\midrule
+\multicolumn{2}{l}{\textit{Performance}} \\
+Maximum Speed & 1.0 m/s \\
+Maximum Acceleration & 0.5 m/s$^2$ \\
+Maximum Slope & 15$^\circ$ \\
+Turning Radius & 0 m (differential drive) \\
+Ground Clearance & 0.05 m \\
+\midrule
+\multicolumn{2}{l}{\textit{Power System}} \\
+Battery Type & Lithium-ion (Li-ion) \\
+Battery Capacity & 10 Ah at 24 V \\
+Total Energy & 240 Wh (864 kJ) \\
+Operating Voltage & 24 VDC \\
+Peak Power & 150 W \\
+Runtime (typical) & 4--6 hours \\
+Charging Time & 2 hours (fast charge) \\
+\midrule
+\multicolumn{2}{l}{\textit{Motors}} \\
+Motor Type & Brushless DC (BLDC) \\
+Rated Power (per motor) & 75 W \\
+Rated Torque & 2.4 N$\cdot$m \\
+Max RPM & 300 RPM \\
+Efficiency & 85--90\% \\
+\midrule
+\multicolumn{2}{l}{\textit{Communication}} \\
+Wireless & Wi-Fi 802.11ac \\
+Wired & Ethernet, USB 3.0 \\
+Emergency Stop & Hardware button + wireless \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\subsection{Computing Platform}
+
+Table~\ref{tab:compute_platform} provides detailed specifications of the onboard computer.
+
+\begin{table}[htbp]
+\centering
+\caption{Onboard Computing Platform Details}
+\label{tab:compute_platform}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+\multicolumn{2}{l}{\textit{Processor (Intel Core i7-10750H)}} \\
+Architecture & Comet Lake (10th Gen) \\
+Process Technology & 14 nm \\
+Cores / Threads & 6 / 12 \\
+Base Frequency & 2.6 GHz \\
+Turbo Frequency & 5.0 GHz (single core) \\
+Cache & 12 MB Intel Smart Cache \\
+TDP & 45 W (configurable to 35 W) \\
+Max Temperature & 100$^\circ$C \\
+Instruction Sets & SSE4.1, SSE4.2, AVX2, AVX-512 \\
+\midrule
+\multicolumn{2}{l}{\textit{Memory}} \\
+Type & DDR4 SDRAM \\
+Capacity & 16 GB (2 $\times$ 8 GB) \\
+Speed & 2933 MHz \\
+Max Bandwidth & 45.8 GB/s \\
+Latency (CAS) & CL21 \\
+ECC & No \\
+\midrule
+\multicolumn{2}{l}{\textit{Storage}} \\
+Type & NVMe PCIe 3.0 x4 SSD \\
+Capacity & 512 GB \\
+Controller & Phison E12 \\
+Sequential Read & 3500 MB/s \\
+Sequential Write & 3000 MB/s \\
+Random Read (4K) & 600,000 IOPS \\
+Random Write (4K) & 550,000 IOPS \\
+MTBF & 1.8 million hours \\
+\midrule
+\multicolumn{2}{l}{\textit{GPU (NVIDIA GeForce GTX 1650 Ti)}} \\
+Architecture & Turing (TU117) \\
+CUDA Cores & 1024 \\
+Tensor Cores & No \\
+RT Cores & No \\
+Base Clock & 1350 MHz \\
+Boost Clock & 1485 MHz \\
+Memory & 4 GB GDDR6 \\
+Memory Bus & 128-bit \\
+Memory Bandwidth & 192 GB/s \\
+TDP & 55 W \\
+Compute Capability & 7.5 \\
+FP32 Performance & 3.04 TFLOPS \\
+\midrule
+\multicolumn{2}{l}{\textit{Networking}} \\
+Ethernet & Intel I219-V Gigabit \\
+Wi-Fi & Intel AX201 (Wi-Fi 6) \\
+Bluetooth & 5.1 \\
+\midrule
+\multicolumn{2}{l}{\textit{Power and Thermal}} \\
+Total Power Consumption & 120 W (typical load) \\
+Peak Power & 180 W \\
+Cooling & Dual-fan active cooling \\
+Operating Temperature & 0$^\circ$C to 35$^\circ$C \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Experimental Trial Details}
+\label{sec:trial_details}
+
+Table~\ref{tab:trial_summary} provides a summary of all experimental trials conducted.
+
+\begin{table}[htbp]
+\centering
+\caption{Summary of Experimental Trials}
+\label{tab:trial_summary}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Scenario} & \textbf{Total Trials} & \textbf{Successful} & \textbf{Failed} & \textbf{Success Rate} \\
+\midrule
+\multicolumn{5}{l}{\textit{A* + PID}} \\
+Simple & 20 & 20 & 0 & 100.0\% \\
+Medium & 20 & 19 & 1 & 95.0\% \\
+Complex & 20 & 18 & 2 & 90.0\% \\
+\textbf{Subtotal} & \textbf{60} & \textbf{57} & \textbf{3} & \textbf{95.0\%} \\
+\midrule
+\multicolumn{5}{l}{\textit{RRT* + MPC}} \\
+Simple & 20 & 20 & 0 & 100.0\% \\
+Medium & 20 & 20 & 0 & 100.0\% \\
+Complex & 20 & 19 & 1 & 95.0\% \\
+\textbf{Subtotal} & \textbf{60} & \textbf{59} & \textbf{1} & \textbf{98.3\%} \\
+\midrule
+\multicolumn{5}{l}{\textit{DWA Only}} \\
+Simple & 20 & 19 & 1 & 95.0\% \\
+Medium & 20 & 17 & 3 & 85.0\% \\
+Complex & 20 & 15 & 5 & 75.0\% \\
+\textbf{Subtotal} & \textbf{60} & \textbf{51} & \textbf{9} & \textbf{85.0\%} \\
+\midrule
+\multicolumn{5}{l}{\textit{PIEC (Proposed)}} \\
+Simple & 20 & 20 & 0 & 100.0\% \\
+Medium & 20 & 20 & 0 & 100.0\% \\
+Complex & 20 & 20 & 0 & 100.0\% \\
+\textbf{Subtotal} & \textbf{60} & \textbf{60} & \textbf{0} & \textbf{100.0\%} \\
+\midrule
+\textbf{Grand Total} & \textbf{240} & \textbf{227} & \textbf{13} & \textbf{94.6\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Failure Analysis}
+
+Table~\ref{tab:failure_analysis} categorizes the reasons for trial failures.
+
+\begin{table}[htbp]
+\centering
+\caption{Failure Analysis by Method and Cause}
+\label{tab:failure_analysis}
+\begin{tabular}{@{}llr@{}}
+\toprule
+\textbf{Method} & \textbf{Failure Cause} & \textbf{Count} \\
+\midrule
+A* + PID & Collision with obstacle & 2 \\
+& Path following error & 1 \\
+\midrule
+RRT* + MPC & Computational timeout & 1 \\
+\midrule
+DWA Only & Local minimum / trapped & 5 \\
+& Collision with obstacle & 3 \\
+& Excessive oscillation & 1 \\
+\midrule
+PIEC & None & 0 \\
+\midrule
+\textbf{Total} & & \textbf{13} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Convergence Analysis}
+\label{sec:convergence_analysis}
+
+Table~\ref{tab:pinn_training} shows PINN training convergence statistics.
+
+\begin{table}[htbp]
+\centering
+\caption{PINN Training Convergence Statistics}
+\label{tab:pinn_training}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Metric} & \textbf{Initial} & \textbf{Final} & \textbf{Improvement} \\
+\midrule
+Total Loss & 2.458 & 0.042 & 98.3\% \\
+Data Loss & 1.834 & 0.028 & 98.5\% \\
+Physics Loss & 0.624 & 0.014 & 97.8\% \\
+\midrule
+Training Epochs & \multicolumn{3}{c}{287 (early stopping at epoch 287)} \\
+Best Epoch & \multicolumn{3}{c}{257} \\
+Training Time & \multicolumn{3}{c}{3.8 hours} \\
+\midrule
+Validation Accuracy & 0.612 & 0.941 & +32.9 pp \\
+Test Set R$^2$ Score & -- & 0.926 & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Computational Performance Breakdown}
+\label{sec:computation_breakdown}
+
+Table~\ref{tab:computation_breakdown} provides detailed timing analysis for each system component.
+
+\begin{table}[htbp]
+\centering
+\caption{Computational Performance Breakdown}
+\label{tab:computation_breakdown}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Component} & \textbf{Min (ms)} & \textbf{Mean (ms)} & \textbf{Max (ms)} & \textbf{Std (ms)} & \textbf{Freq (Hz)} \\
+\midrule
+PINN Inference & 4.2 & 6.5 & 11.3 & 1.8 & 10 \\
+UKF Prediction & 1.8 & 2.4 & 4.1 & 0.6 & 10 \\
+UKF Update & 1.5 & 2.1 & 3.8 & 0.5 & 10 \\
+DWA Planning & 12.3 & 18.7 & 32.5 & 5.2 & 5 \\
+Sensor Processing & 3.5 & 5.2 & 8.9 & 1.4 & 20 \\
+Visualization & 8.2 & 12.5 & 22.1 & 3.8 & 10 \\
+\midrule
+Total (per cycle) & 22.1 & 28.4 & 45.8 & 7.2 & 10 \\
+\midrule
+NSGA-II (per gen.) & 185.3 & 342.7 & 628.4 & 98.5 & 0.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+
+\section{Energy Consumption Breakdown}
+\label{sec:energy_breakdown}
+
+Table~\ref{tab:energy_components} breaks down energy consumption by component.
+
+\begin{table}[htbp]
+\centering
+\caption{Energy Consumption by Component (Medium Scenario, PIEC)}
+\label{tab:energy_components}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Component} & \textbf{Energy (J)} & \textbf{Percentage} & \textbf{Power (W)} \\
+\midrule
+Motor Actuation & 198.5 & 69.6\% & 12.2 \\
+\quad Linear motion & 142.3 & 49.9\% & 8.8 \\
+\quad Rotational motion & 56.2 & 19.7\% & 3.4 \\
+\midrule
+Computing & 52.8 & 18.5\% & 3.2 \\
+\quad Main processor & 38.4 & 13.5\% & 2.4 \\
+\quad GPU (optional) & 14.4 & 5.0\% & 0.8 \\
+\midrule
+Sensors & 18.7 & 6.6\% & 1.2 \\
+\quad Lidar & 13.0 & 4.6\% & 0.8 \\
+\quad IMU & 2.4 & 0.8\% & 0.15 \\
+\quad Encoders & 3.3 & 1.2\% & 0.25 \\
+\midrule
+Communication & 8.5 & 3.0\% & 0.5 \\
+\midrule
+Other (cooling, etc.) & 6.8 & 2.4\% & 0.4 \\
+\midrule
+\textbf{Total} & \textbf{285.3} & \textbf{100.0\%} & \textbf{17.5} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Pareto Front Statistics}
+\label{sec:pareto_statistics}
+
+Table~\ref{tab:pareto_stats} summarizes the characteristics of Pareto fronts obtained by NSGA-II.
+
+\begin{table}[htbp]
+\centering
+\caption{Pareto Front Statistics for PIEC System}
+\label{tab:pareto_stats}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Metric} & \textbf{Simple} & \textbf{Medium} & \textbf{Complex} \\
+\midrule
+Number of Solutions & 28 & 35 & 42 \\
+Hypervolume & 0.842 & 0.815 & 0.788 \\
+Spread Metric & 0.652 & 0.687 & 0.721 \\
+Spacing Metric & 0.089 & 0.102 & 0.125 \\
+\midrule
+\multicolumn{4}{l}{\textit{Path Length (m)}} \\
+Minimum & 11.2 & 13.5 & 16.1 \\
+Maximum & 12.8 & 15.9 & 18.5 \\
+Selected & 11.3 & 13.9 & 16.5 \\
+\midrule
+\multicolumn{4}{l}{\textit{Energy (J)}} \\
+Minimum & 215.3 & 278.4 & 355.2 \\
+Maximum & 238.5 & 312.8 & 395.7 \\
+Selected & 218.7 & 285.3 & 362.7 \\
+\midrule
+\multicolumn{4}{l}{\textit{Smoothness (normalized)}} \\
+Minimum & 0.82 & 0.78 & 0.75 \\
+Maximum & 0.92 & 0.89 & 0.87 \\
+Selected & 0.89 & 0.86 & 0.84 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
