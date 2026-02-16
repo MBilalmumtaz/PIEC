@@ -5,8 +5,8 @@ from math import pi
 
 # ros2 imports
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.conditions import IfCondition, UnlessCondition
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch.substitutions import (
@@ -14,6 +14,7 @@ from launch.substitutions import (
 	FindExecutable,
 	LaunchConfiguration,
 	PythonExpression,
+	PathJoinSubstitution,
 )
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -46,18 +47,71 @@ def generate_launch_description():
 		choices=["3d", "2d"]
 	)
 
-	# include launch file with gazebo world
-	aws_small_warehouse_dir = get_package_share_directory(
-		"aws_robomaker_small_warehouse_world"
+	# World selection argument
+	world_name_arg = DeclareLaunchArgument(
+		name="world_name",
+		default_value="aws_warehouse",
+		description="Gazebo world to load",
+		choices=["aws_warehouse", "office", "agriculture", "inspection", "obstacle", "orchard", "empty", "race", "accessories"],
 	)
-	warehouse_world_launch = IncludeLaunchDescription(
-		PythonLaunchDescriptionSource(
-			[
-				aws_small_warehouse_dir,
-				"/launch/no_roof_small_warehouse.launch.py",
-			]
-		)
-	)
+
+	# Spawn position arguments
+	spawn_x_arg = DeclareLaunchArgument(name="spawn_x", default_value="0.0")
+	spawn_y_arg = DeclareLaunchArgument(name="spawn_y", default_value="0.0")
+	spawn_z_arg = DeclareLaunchArgument(name="spawn_z", default_value="0.2346")
+	spawn_yaw_arg = DeclareLaunchArgument(name="spawn_yaw", default_value="0.0")
+
+	# Function to generate world launch based on world_name
+	def launch_world(context, *args, **kwargs):
+		world_name = LaunchConfiguration("world_name").perform(context)
+		world_launch_list = []
+
+		# Helper function to create world launch description
+		def create_world_launch(package_name, launch_file):
+			return IncludeLaunchDescription(
+				PythonLaunchDescriptionSource(
+					PathJoinSubstitution([
+						get_package_share_directory(package_name),
+						"launch",
+						launch_file
+					])
+				)
+			)
+
+		# Map world names to their package and launch file
+		world_configs = {
+			"aws_warehouse": ("aws_robomaker_small_warehouse_world", None),  # Special case
+			"office": ("cpr_office_gazebo", "office_world.launch.py"),
+			"agriculture": ("cpr_agriculture_gazebo", "agriculture_world.launch.py"),
+			"inspection": ("cpr_inspection_gazebo", "inspection_world.launch.py"),
+			"obstacle": ("cpr_obstacle_gazebo", "cpr_obstacle_world.launch.py"),
+			"orchard": ("cpr_orchard_gazebo", "orchard_world.launch.py"),
+			"empty": ("cpr_empty_gazebo", "empty_world.launch.py"),
+			"race": ("cpr_race_modules", "spawn_world.launch.py"),
+			"accessories": ("cpr_empty_gazebo", "empty_world.launch.py"),  # Uses empty world base (accessories package only provides model definitions)
+		}
+
+		if world_name in world_configs:
+			package_name, launch_file = world_configs[world_name]
+			
+			if world_name == "aws_warehouse":
+				# AWS warehouse uses a different launch file path pattern
+				# It includes the package path directly rather than using PathJoinSubstitution
+				aws_small_warehouse_dir = get_package_share_directory(package_name)
+				warehouse_world_launch = IncludeLaunchDescription(
+					PythonLaunchDescriptionSource(
+						[
+							aws_small_warehouse_dir,
+							"/launch/no_roof_small_warehouse.launch.py",
+						]
+					)
+				)
+				world_launch_list.append(warehouse_world_launch)
+			else:
+				# Standard world launch
+				world_launch_list.append(create_world_launch(package_name, launch_file))
+
+		return world_launch_list
 
 	# bridge configuration file
 	ros2_gz_bridge_file = os.path.join(
@@ -126,17 +180,17 @@ def generate_launch_description():
 			"-topic",
 			"/scout/robot_description",
 			"-x",
-			"0",
+			LaunchConfiguration("spawn_x"),
 			"-y",
-			"0",
+			LaunchConfiguration("spawn_y"),
 			"-z",
-			"0.2346",
+			LaunchConfiguration("spawn_z"),
 			"-R",
 			"0",
 			"-P",
 			"0",
 			"-Y",
-			"0",
+			LaunchConfiguration("spawn_yaw"),
 		],
 		output="screen",
 	)
@@ -243,9 +297,14 @@ def generate_launch_description():
 			odometry_source_arg,
 			rviz_arg,
 			lidar_type_arg,
+			world_name_arg,
+			spawn_x_arg,
+			spawn_y_arg,
+			spawn_z_arg,
+			spawn_yaw_arg,
 			static_tf,
 			robot_state_publisher_node,
-			warehouse_world_launch,
+			OpaqueFunction(function=launch_world),
 			spawn_robot_urdf_node,
 			bridge,
 			rviz2_node,
