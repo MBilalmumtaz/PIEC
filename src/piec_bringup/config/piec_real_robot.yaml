@@ -1,0 +1,160 @@
+# PIEC Stack Configuration for Real Scout Mini Robot
+
+# Laser Bridge
+laser_bridge:
+  ros__parameters:
+    min_range: 0.1
+    max_range: 8.0
+    range_filter_window: 3
+    median_filter: true
+    outlier_threshold: 0.5
+    publish_raw: false
+    input_topic: "/scan_raw"
+    output_fixed_topic: "/scan_fixed"
+    output_scan_topic: "/scan"
+    use_sim_time: false
+
+# UKF Localization
+ukf_localization:
+  ros__parameters:
+    # Robot parameters
+    robot_radius: 0.3
+    wheel_radius: 0.16
+    wheel_separation: 0.4563536
+    wheel_base: 0.3132556
+    
+    # UKF parameters
+    alpha: 0.001
+    beta: 2.0
+    kappa: 0.0
+    
+    # Process noise
+    process_noise_linear: 0.01
+    process_noise_angular: 0.01
+    
+    # Measurement noise
+    measurement_noise_range: 0.1
+    measurement_noise_bearing: 0.05
+    
+    # TF frames
+    odom_frame: "odom"
+    base_frame: "base_footprint"
+    global_frame: "map"
+    publish_tf: true
+    
+    use_sim_time: false
+
+# Path Optimizer
+path_optimizer:
+  ros__parameters:
+    # Robot parameters
+    robot_radius: 0.3
+    max_linear_vel: 1.2
+    max_angular_vel: 0.8
+    min_linear_vel: 0.3
+    
+    # Genetic Algorithm parameters
+    population_size: 10
+    generations: 5
+    mutation_rate: 0.1
+    crossover_rate: 0.8
+    
+    # Path parameters
+    waypoint_count: 3
+    max_curvature: 2.0
+    min_turn_radius: 0.4
+    path_smoothing: true
+    
+    # Performance
+    optimization_timeout: 2.0
+    planning_rate: 1.0
+    use_multithreading: true
+    max_workers: 2
+    
+    # Debug
+    debug_mode: true
+    require_explicit_goal: false
+    
+    use_sim_time: false
+
+# Controller
+controller:
+  ros__parameters:
+    # Robot parameters
+    robot_radius: 0.3
+    wheel_radius: 0.16
+    wheel_separation: 0.4563536
+    wheel_base: 0.3132556
+    
+    # Velocity limits
+    max_linear_vel: 1.2
+    min_linear_vel: 0.3
+    max_angular_vel: 0.8
+    
+    # Calibration factors - BUG FIXES
+    linear_scale_factor: 1.0
+    angular_scale_factor: 1.0
+    angular_sign_correction: -1.0  # Scout Mini: invert sign (motors interpret positive as CW)
+    
+    # Control tuning - FIX: Increased threshold to prevent spinning for lateral goals
+    rotate_in_place_angle_deg: 120.0  # Degrees before rotating in place - INCREASED from 30° to allow turning while moving
+    max_heading_rate: 0.6  # rad/s - full angular velocity for rotation
+    rotation_timeout: 5.0  # Maximum time to spend rotating in place (seconds)
+    
+    # Safety distances
+    emergency_stop_distance: 0.2
+    slow_down_distance: 0.5
+    safe_distance: 0.6
+    
+    # Control parameters
+    waypoint_tolerance: 0.3
+    lookahead_distance: 0.8
+    control_frequency: 15.0
+    
+    # DWA parameters
+    dwa_max_v: 1.2
+    dwa_min_v: 0.3
+    dwa_max_w: 0.8
+    dwa_sim_time: 1.0
+    dwa_clearance_weight: 1.5
+    dwa_goal_weight: 2.0
+    
+    # PID gains
+    k_linear: 1.2
+    k_angular: 1.8
+    i_linear: 0.05
+    i_angular: 0.08
+    d_linear: 0.01
+    d_angular: 0.02
+    
+    # Stuck detection
+    stuck_threshold: 0.3
+    stuck_time: 10.0
+    
+    # Debug
+    debug_mode: true
+    require_explicit_goal: false
+    
+    use_sim_time: false
+
+# Emergency Stop
+emergency_stop:
+  ros__parameters:
+    stop_distance: 0.2
+    slow_distance: 0.4
+    enable_emergency_stop: true
+    scan_topic: "/scan"
+    cmd_vel_topic: "/cmd_vel"
+    emergency_cmd_vel_topic: "/emergency_cmd_vel"
+    use_sim_time: false
+
+# Robot Info
+robot_info:
+  ros__parameters:
+    robot_type: "scout_mini"
+    robot_name: "Scout Mini"
+    wheel_radius: 0.16
+    wheel_separation: 0.4563536
+    wheel_base: 0.3132556
+    max_speed: 1.2
+    use_sim_time: false

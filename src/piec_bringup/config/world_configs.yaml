@@ -1,0 +1,84 @@
+# World-specific spawn configurations for PIEC simulation
+# Each world has spawn position (x, y, z, yaw) for the robot
+
+worlds:
+  aws_warehouse:
+    description: "AWS RoboMaker small warehouse environment (no roof)"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "aws_robomaker_small_warehouse_world"
+    
+  office:
+    description: "Indoor office environment with desks and obstacles"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_office_gazebo"
+    
+  agriculture:
+    description: "Agricultural field environment with crops and terrain"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_agriculture_gazebo"
+    
+  inspection:
+    description: "Industrial inspection environment with pipes and structures"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_inspection_gazebo"
+    
+  obstacle:
+    description: "Obstacle course with various challenging elements"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_obstacle_gazebo"
+    
+  orchard:
+    description: "Orchard environment with trees and natural terrain"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_orchard_gazebo"
+    
+  empty:
+    description: "Empty world for basic testing"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_empty_gazebo"
+    
+  race:
+    description: "Racing track environment with modules"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_race_modules"
+    
+  # Note: Accessories package provides models but no dedicated world launch file
+  # The actual launch uses cpr_empty_gazebo package
+  accessories:
+    description: "Empty world base for testing with accessories models available"
+    spawn_x: 0.0
+    spawn_y: 0.0
+    spawn_z: 0.2346
+    spawn_yaw: 0.0
+    package: "cpr_empty_gazebo"
+    models_package: "cpr_accessories_gazebo"
+
+# Usage notes:
+# - spawn_z: 0.2346 is the standard height for Scout Mini to sit properly on ground
+# - spawn_yaw: Orientation in radians (0 = facing along +X axis)
+# - Adjust spawn positions as needed for specific world layouts
+# - The 'accessories' world uses empty world as base since the package only provides model definitions
