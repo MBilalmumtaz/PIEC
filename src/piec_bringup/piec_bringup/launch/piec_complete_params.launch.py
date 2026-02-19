@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Complete launch file for PIEC stack with PINN - INCLUDES SIMULATION
+Only includes aws_warehouse and agriculture worlds
 """
 
 from launch import LaunchDescription
@@ -26,14 +27,14 @@ def generate_launch_description():
     ld = LaunchDescription()
     
     # ------------------------------------------------------------------
-    # 2. Launch arguments
+    # 2. Launch arguments - ONLY TWO WORLDS
     # ------------------------------------------------------------------
     ld.add_action(DeclareLaunchArgument("use_sim", default_value="true"))
     ld.add_action(DeclareLaunchArgument(
         "world", 
         default_value="aws_warehouse",
-        choices=["aws_warehouse", "office", "agriculture", "inspection", "obstacle", "orchard", "empty", "race", "accessories"],
-        description="Gazebo world to load for simulation"
+        choices=["aws_warehouse", "agriculture"],
+        description="Gazebo world to load for simulation (aws_warehouse or agriculture)"
     ))
     ld.add_action(DeclareLaunchArgument("enable_pinn", default_value="true"))
     ld.add_action(DeclareLaunchArgument("robot_type", default_value="scout_mini"))
@@ -43,7 +44,7 @@ def generate_launch_description():
     # Data recording arguments
     ld.add_action(DeclareLaunchArgument("enable_recording", default_value="false"))
     ld.add_action(DeclareLaunchArgument("method", default_value="PIEC"))
-    ld.add_action(DeclareLaunchArgument("environment", default_value="corridor"))
+    ld.add_action(DeclareLaunchArgument("environment", default_value="aws_warehouse"))
     ld.add_action(DeclareLaunchArgument("trial_name", default_value="trial_001"))
     ld.add_action(DeclareLaunchArgument("output_dir", default_value="~/piec_data"))
     
@@ -66,7 +67,7 @@ def generate_launch_description():
     ld.add_action(SetParameter(name="use_sim_time", value=use_sim_time))
     
     # ------------------------------------------------------------------
-    # 4. LAUNCH SIMULATION - THIS IS WHAT'S MISSING
+    # 4. LAUNCH SIMULATION
     # ------------------------------------------------------------------
     # First, find the AgileX Scout package
     try:
@@ -123,10 +124,10 @@ def generate_launch_description():
     }
     
     # ------------------------------------------------------------------
-    # 7. PIEC STACK NODES (Your existing nodes)
+    # 7. PIEC STACK NODES
     # ------------------------------------------------------------------
     
-    # 7.1 PINN Service (YOUR INNOVATION)
+    # 7.1 PINN Service
     ld.add_action(
         Node(
             package="piec_pinn_surrogate",
@@ -253,6 +254,8 @@ def generate_launch_description():
             }],
         )
     )
+    
+    # 7.7 Metrics Collector
     ld.add_action(
         Node(
             package="piec_validation",
@@ -266,6 +269,8 @@ def generate_launch_description():
             }],
         )
     )
+    
+    # 7.8 Dynamics Node
     ld.add_action(
         Node(
             package="piec_dynamics",
@@ -279,7 +284,7 @@ def generate_launch_description():
         )
     )
     
-    # 7.8 Experiment Recorder (optional)
+    # 7.9 Experiment Recorder (optional)
     ld.add_action(
         Node(
             package="piec_bringup",
@@ -297,8 +302,5 @@ def generate_launch_description():
             }],
         )
     )
-
     
-    
- 
     return ld
