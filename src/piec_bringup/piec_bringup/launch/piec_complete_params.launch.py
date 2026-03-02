@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Complete launch file for PIEC stack with PINN - INCLUDES SIMULATION
-Only includes aws_warehouse and agriculture worlds
+Includes aws_warehouse, agriculture, and office_cpr worlds
 """
 
 from launch import LaunchDescription
@@ -27,14 +27,15 @@ def generate_launch_description():
     ld = LaunchDescription()
     
     # ------------------------------------------------------------------
-    # 2. Launch arguments - ONLY TWO WORLDS
+    # 2. Launch arguments - THREE WORLDS
     # ------------------------------------------------------------------
     ld.add_action(DeclareLaunchArgument("use_sim", default_value="true"))
     ld.add_action(DeclareLaunchArgument(
         "world", 
         default_value="aws_warehouse",
-        choices=["aws_warehouse", "agriculture"],
-        description="Gazebo world to load for simulation (aws_warehouse or agriculture)"
+        choices=["aws_warehouse", "agriculture", "office_cpr", "baylands_terrain",
+                 "campus", "grasspatch", "indoor_lightmap", "simple_baylands"],
+        description="Gazebo world to load for simulation (aws_warehouse, agriculture, or office_cpror baylands_terrain)"
     ))
     ld.add_action(DeclareLaunchArgument("enable_pinn", default_value="true"))
     ld.add_action(DeclareLaunchArgument("robot_type", default_value="scout_mini"))
@@ -136,7 +137,7 @@ def generate_launch_description():
             output="screen",
             condition=IfCondition(enable_pinn),
             parameters=[{
-                "model_path": "/home/amjad/scoutmini_ws3/src/piec_pinn_surrogate/models/pinn_physics.pt",
+                "model_path": "/home/amjad/PIEC_2d/src/piec_pinn_surrogate/models/pinn_physics.pt",
                 "default_clearance": 2.0,
                 "default_obstacle_density": 0.0,
                 "use_laser_updates": True,
@@ -161,6 +162,7 @@ def generate_launch_description():
             }],
         )
     )
+    
     
     # 7.3 Laser Bridge
     ld.add_action(
