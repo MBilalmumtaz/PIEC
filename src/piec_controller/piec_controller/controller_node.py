@@ -721,14 +721,24 @@ class ControllerNode(Node):
             
             # Check if stuck for long enough AND obstacles are present
             current_time = time.monotonic()
-            if (self.stuck_detected and 
+            if (self.stuck_detected and
                 self.stuck_start_time is not None and
                 current_time - self.stuck_start_time > self.stuck_threshold_time and
                 self.consecutive_obstacle_readings >= self.min_obstacle_presence and
                 not self.recovery_mode):
-                
+
+                # Only initiate recovery if forward path is actually blocked
+                if self.has_forward_clearance(min_clearance=1.0):
+                    if self.debug_mode:
+                        self.get_logger().info(
+                            "✅ Forward clear (>1.0m) - skipping recovery, continuing normal control"
+                        )
+                    self.stuck_detected = False
+                    self.stuck_start_time = None
+                    return
+
                 self.obstacle_present_when_stuck = True
-                
+
                 # Check if we have free space alternatives before initiating recovery
                 if self.free_space_directions and self.free_space_escape_preferred:
                     if self.debug_mode:
@@ -782,17 +792,23 @@ class ControllerNode(Node):
         # High angular, low/moderate linear (but robot IS moving) = oscillating
         # Robot is moving (>= 0.1) but still showing oscillatory behavior
         is_oscillating = avg_angular > 0.4 and avg_linear < 0.2
-        
+
         # Also check position history
         if hasattr(self, 'position_history') and len(self.position_history) >= 20:
             positions = [pos for pos, _ in list(self.position_history)[-20:]]
             center = np.mean(positions, axis=0)
             radius = np.mean([np.hypot(p[0]-center[0], p[1]-center[1]) for p in positions])
-            
+
             # Small radius = circling
             if radius < 0.30:  # Reduced from 0.2
                 is_oscillating = True
-        
+
+        # Only declare oscillation if forward path is actually blocked
+        if is_oscillating and self.has_forward_clearance(min_clearance=1.0):
+            if self.debug_mode:
+                self.get_logger().debug("✅ Forward clear - NOT oscillating (just slow turning)")
+            return False
+
         return is_oscillating
 
     def attempt_free_space_escape(self):
@@ -838,7 +854,7 @@ class ControllerNode(Node):
             
             # Execute a simple turn toward free space
             self.recovery_mode = True
-            self.recovery_start_time = time.monotonic()
+            self.recovery_start_time = self.get_clock().now()
             self.recovery_phase = 'free_space_turn'
             
             if self.debug_mode:
@@ -1037,17 +1053,36 @@ class ControllerNode(Node):
         
         return best_angle
 
+    def has_forward_clearance(self, min_clearance=1.0):
+        """Check if there is sufficient clearance in forward direction"""
+        if not self.scan_ranges or not self.scan_angles:
+            return False  # No data, assume blocked for safety
+
+        # Check forward cone (±30 degrees)
+        forward_ranges = []
+        for angle, range_val in zip(self.scan_angles, self.scan_ranges):
+            if abs(angle) < math.radians(30):  # ±30° = 60° forward cone
+                if 0.1 < range_val < 50.0:  # Valid range
+                    forward_ranges.append(range_val)
+
+        if not forward_ranges:
+            return False
+
+        min_forward_clearance = min(forward_ranges)
+        return min_forward_clearance > min_clearance
+
     def complete_recovery(self):
         """Complete recovery sequence"""
         self.recovery_mode = False
+        self.recovery_start_time = None
         self.stuck_detected = False
         self.stuck_start_time = None
         self.obstacle_present_when_stuck = False
         self.path = None  # Clear current path to get new one
-        
+
         # Toggle free space preference
         self.free_space_escape_preferred = not self.free_space_escape_preferred
-        
+
         if self.debug_mode:
             self.get_logger().info("✅ Recovery sequence complete")
 
