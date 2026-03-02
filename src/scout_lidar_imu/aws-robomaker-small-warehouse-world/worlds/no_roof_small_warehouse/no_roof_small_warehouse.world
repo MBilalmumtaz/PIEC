@@ -112,6 +112,138 @@
     <model name="obs_22"><pose>-1.592441 7.715420 0.25 0 0 0</pose><static>true</static><link name="link"><collision name="c"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision><visual name="v"><geometry><box><size>0.5 0.5 0.5</size></box></geometry><material><ambient>0.7 0.5 0.3 1</ambient><diffuse>0.7 0.5 0.3 1</diffuse></material></visual></link></model>
 
     <model name="obs_23"><pose>-0.276098 -9.481944 0.273266 0 0 0</pose><static>true</static><link name="link"><collision name="c"><geometry><box><size>0.5 0.5 0.5</size></box></geometry></collision><visual name="v"><geometry><box><size>0.5 0.5 0.5</size></box></geometry><material><ambient>0.7 0.5 0.3 1</ambient><diffuse>0.7 0.5 0.3 1</diffuse></material></visual></link></model>
+  <!-- Actor: Westbound (moves from East to West) with collision -->
+<actor name="actor_westbound">
+    <!-- Start at safe East position, move West -->
+    <pose>8.0 0.0 0.9 0 0 3.14</pose>  <!-- face WEST - this is just initial, trajectory overrides -->
+
+    <skin>
+        <filename>model://walking_actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+    </skin>
+
+    <animation name="walking">
+        <filename>model://walking_actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+    </animation>
+
+    <!-- Collision cylinder -->
+    <collision>
+        <pose>0 0 0.9 0 0 0</pose>
+        <geometry>
+            <cylinder>
+                <radius>0.35</radius>
+                <length>1.8</length>
+            </cylinder>
+        </geometry>
+    </collision>
+
+    <script>
+        <trajectory id="0" type="walking">
+            <!-- Move from East to West (6.0 to 2.0 = 4 units) -->
+            <!-- Speed = distance/time = 4/12 = 0.33 units/sec (slower) -->
+            <waypoint>
+                <time>0</time>
+                <pose>6.0 0.0 0.0 0 0 3.14</pose>
+            </waypoint>
+            <waypoint>
+                <time>12</time>  <!-- Increased from 6 to 12 to slow down -->
+                <pose>2.0 0.0 0.0 0 0 3.14</pose>
+            </waypoint>
+            
+            <!-- Pause at West end for 60 seconds -->
+            <waypoint>
+                <time>72</time>  <!-- 12 + 60 = 72 -->
+                <pose>2.0 0.0 0.0 0 0 3.14</pose>  <!-- Same position -->
+            </waypoint>
+            
+            <!-- Instant teleport back to East -->
+            <waypoint>
+                <time>72.1</time>  <!-- Slightly after pause -->
+                <pose>6.0 0.0 0.0 0 0 3.14</pose>
+            </waypoint>
+            
+            <!-- Pause at East end for 60 seconds -->
+            <waypoint>
+                <time>132.1</time>  <!-- 72.1 + 60 = 132.1 -->
+                <pose>6.0 0.0 0.0 0 0 3.14</pose>  <!-- Same position -->
+            </waypoint>
+            
+            <!-- Start next cycle (loop back to beginning) -->
+            <waypoint>
+                <time>132.2</time>  <!-- Slightly after pause -->
+                <pose>6.0 0.0 0.0 0 0 3.14</pose>
+            </waypoint>
+        </trajectory>
+    </script>
+</actor>
+
+<!-- Actor: East-West mover at y=3.0 with collision -->
+<actor name="actor_eastwest">
+    <pose>4.0 -2.5 0.9 0 0 1.57</pose>  <!-- Initial pose, trajectory overrides -->
+
+    <skin>
+        <filename>model://walking_actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+    </skin>
+
+    <animation name="walking">
+        <filename>model://walking_actor/meshes/walk.dae</filename>
+        <scale>1.0</scale>
+        <interpolate_x>true</interpolate_x>
+    </animation>
+
+    <!-- Collision cylinder -->
+    <collision>
+        <pose>0 0 0.9 0 0 0</pose>
+        <geometry>
+            <cylinder>
+                <radius>0.35</radius>
+                <length>1.8</length>
+            </cylinder>
+        </geometry>
+    </collision>
+
+    <script>
+        <trajectory id="0" type="walking">
+            <!-- Move from West to East (2.0 to 7.0 = 5 units) -->
+            <!-- Speed = distance/time = 5/15 = 0.33 units/sec (slower) -->
+            <waypoint>
+                <time>0</time>
+                <pose>2.0 3.0 0.0 0 0 0</pose>
+            </waypoint>
+            <waypoint>
+                <time>15</time>  <!-- Increased from 6 to 15 to slow down -->
+                <pose>7.0 3.0 0.0 0 0 0</pose>
+            </waypoint>
+            
+            <!-- Pause at East end for 60 seconds -->
+            <waypoint>
+                <time>75</time>  <!-- 15 + 60 = 75 -->
+                <pose>7.0 3.0 0.0 0 0 0</pose>  <!-- Same position -->
+            </waypoint>
+            
+            <!-- Instant teleport back to West -->
+            <waypoint>
+                <time>75.1</time>  <!-- Slightly after pause -->
+                <pose>2.0 3.0 0.0 0 0 0</pose>
+            </waypoint>
+            
+            <!-- Pause at West end for 60 seconds -->
+            <waypoint>
+                <time>135.1</time>  <!-- 75.1 + 60 = 135.1 -->
+                <pose>2.0 3.0 0.0 0 0 0</pose>  <!-- Same position -->
+            </waypoint>
+            
+            <!-- Start next cycle (loop back to beginning) -->
+            <waypoint>
+                <time>135.2</time>  <!-- Slightly after pause -->
+                <pose>2.0 3.0 0.0 0 0 0</pose>
+            </waypoint>
+        </trajectory>
+    </script>
+</actor>
 
 		<light name="Warehouse_CeilingLight_003" type="point">
 			<pose >0 0 8.5 0 0 0</pose>
