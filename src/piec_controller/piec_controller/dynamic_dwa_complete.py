@@ -75,20 +75,30 @@ class DynamicDWAComplete:
             # Generate velocity candidates
             v_samples = np.arange(self.min_v, dynamic_max_v + self.v_resolution, self.v_resolution)
             w_samples = np.arange(-dynamic_max_w, dynamic_max_w + self.w_resolution, self.w_resolution)
-            
+
+            # **NEW: Check if forward direction is clear - if so, restrict to forward velocities**
+            goal_x = path.poses[-1].pose.position.x
+            goal_y = path.poses[-1].pose.position.y
+            goal_dir = math.atan2(goal_y - y, goal_x - x)
+
+            forward_clearance = self.get_clearance_in_direction_scan(scan_ranges, scan_angles, theta, goal_dir)
+
+            if forward_clearance > 1.0:  # More than 1m clearance in forward direction
+                # Remove any negative velocities - only allow forward motion
+                v_samples = v_samples[v_samples >= 0]
+                if hasattr(self.node, 'debug_mode') and self.node.debug_mode and hasattr(self.node, 'control_counter') and self.node.control_counter % 50 == 0:
+                    self.node.get_logger().info(
+                        f"✅ Forward clear ({forward_clearance:.2f}m) - restricting to forward motion only"
+                    )
+
             if len(v_samples) == 0 or len(w_samples) == 0:
                 return self.fallback_control(current_pose, path)
-            
+
             # Evaluate trajectories
             best_trajectory = None
             best_score = -float('inf')
             best_v = 0.0
             best_w = 0.0
-            
-            # Get goal direction for free space scoring
-            goal_x = path.poses[-1].pose.position.x
-            goal_y = path.poses[-1].pose.position.y
-            goal_dir = math.atan2(goal_y - y, goal_x - x)
             
             for v in v_samples:
                 for w in w_samples:
@@ -414,6 +424,29 @@ class DynamicDWAComplete:
                 return scan_dist - dist - self.robot_radius
         
         return 2.0  # Default large clearance
+
+    def get_clearance_in_direction_scan(self, scan_ranges, scan_angles, robot_theta, world_angle):
+        """
+        Get clearance in a world direction using scan data
+        """
+        if scan_ranges is None or scan_angles is None:
+            return float('inf')
+
+        # Convert world angle to robot frame
+        local_angle = world_angle - robot_theta
+        local_angle = math.atan2(math.sin(local_angle), math.cos(local_angle))
+
+        # Find closest scan angle
+        min_diff = float('inf')
+        closest_range = float('inf')
+
+        for scan_angle, scan_range in zip(scan_angles, scan_ranges):
+            diff = abs(scan_angle - local_angle)
+            if diff < min_diff and scan_range > 0.1:
+                min_diff = diff
+                closest_range = scan_range
+
+        return closest_range
 
     def calc_path_score(self, trajectory, path):
         """Calculate path following score"""

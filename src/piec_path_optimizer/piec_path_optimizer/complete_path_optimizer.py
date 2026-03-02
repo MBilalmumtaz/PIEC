@@ -726,11 +726,27 @@ class CompletePathOptimizer(Node):
         if time_since_goal < 12.0:
             return
         
+        # **NEW: Before declaring stuck, verify forward is actually blocked**
+        if self.robot_pose and self.goal_pose:
+            rx = self.robot_pose.pose.pose.position.x
+            ry = self.robot_pose.pose.pose.position.y
+            gx = self.goal_pose.pose.position.x
+            gy = self.goal_pose.pose.position.y
+
+            forward_blocked = self.is_forward_path_blocked(rx, ry, gx, gy, min_clearance=0.5)
+
+            if not forward_blocked:
+                # Forward is clear - NOT stuck, just slow progress
+                if self.debug_mode and current_time - self.last_stuck_time > 10.0:
+                    self.get_logger().info("✅ Forward path is CLEAR - no escape needed")
+                self.stuck_positions.clear()  # Reset stuck tracking
+                return
+
         # STRICTER thresholds for stuck detection
         # Only mark stuck if BOTH conditions are true:
-        # 1. Very low movement (< 0.25m in 15 seconds)
-        # 2. Small radius (< 0.35m) indicating spinning
-        if total_movement < 0.25 and radius < 0.35:
+        # 1. Very low movement (< 0.15m in 15 seconds - more strict)
+        # 2. Small radius (< 0.30m) indicating spinning
+        if total_movement < 0.15 and radius < 0.30:
             is_stuck = True
             reasons.append(f"Oscillating: movement={total_movement:.2f}m, radius={radius:.2f}m")
         
@@ -867,13 +883,20 @@ class CompletePathOptimizer(Node):
         if current_time - self.last_escape_time < 3.0:
             return
         
-        self.last_escape_time = current_time
-        self.escape_paths_generated += 1
-        
         x = self.robot_pose.pose.pose.position.x
         y = self.robot_pose.pose.pose.position.y
         goal_x = self.goal_pose.pose.position.x
         goal_y = self.goal_pose.pose.position.y
+
+        # **NEW: Check if forward is actually blocked before generating escape**
+        if not self.is_forward_path_blocked(x, y, goal_x, goal_y, min_clearance=0.5):
+            if self.debug_mode:
+                self.get_logger().info("✅ Forward path CLEAR - skipping escape path generation")
+            return
+
+        # Forward IS blocked - continue with escape logic
+        self.last_escape_time = current_time
+        self.escape_paths_generated += 1
         
         # Find ALL clear directions (not just best one)
         clear_directions = []
@@ -933,6 +956,40 @@ class CompletePathOptimizer(Node):
 
     def generate_backward_escape(self, x, y, goal_x, goal_y):
         """Generate backward escape when surrounded"""
+        # **NEW: Double-check we're actually surrounded**
+        clearances = []
+        for angle in np.arange(0, 2*math.pi, math.pi/8):
+            clearance = self.get_clearance_in_direction(x, y, angle)
+            clearances.append(clearance)
+
+        max_clearance = max(clearances)
+
+        if max_clearance > 0.6:
+            # We have clearance in SOME direction - use that instead of backward
+            best_idx = clearances.index(max_clearance)
+            best_angle = best_idx * math.pi / 8
+
+            if self.debug_mode:
+                self.get_logger().info(
+                    f"✅ Found clearance ({max_clearance:.2f}m) at {math.degrees(best_angle):.0f}° - "
+                    f"using side escape instead of backward"
+                )
+
+            # Generate side escape instead
+            path = [(x, y)]
+            escape_dist = min(1.0, max_clearance * 0.7)
+            escape_x = x + escape_dist * math.cos(best_angle)
+            escape_y = y + escape_dist * math.sin(best_angle)
+            path.append((escape_x, escape_y))
+            path.append((goal_x, goal_y))
+
+            self.publish_path(path)
+            return
+
+        # Truly surrounded - NOW use backward escape
+        if self.debug_mode:
+            self.get_logger().warn(f"⚠️ TRULY SURROUNDED (max clearance: {max_clearance:.2f}m) - using backward escape")
+
         # Get robot's current heading
         quat = self.robot_pose.pose.pose.orientation
         yaw = math.atan2(2.0 * (quat.w * quat.z + quat.x * quat.y),
@@ -1123,6 +1180,37 @@ class CompletePathOptimizer(Node):
                     return distance - 0.1
         
         return max_distance
+
+    def is_forward_path_blocked(self, start_x, start_y, goal_x, goal_y, min_clearance=0.5):
+        """
+        Check if forward path toward goal is actually blocked
+        Returns True if blocked, False if clear
+        """
+        if self.obstacle_grid is None:
+            return False
+
+        # Calculate direction toward goal
+        goal_dir = math.atan2(goal_y - start_y, goal_x - start_x)
+
+        # Check clearance in forward direction (toward goal)
+        forward_clearance = self.get_clearance_in_direction(start_x, start_y, goal_dir)
+
+        # Also check slight angles left/right of goal direction
+        left_clearance = self.get_clearance_in_direction(start_x, start_y, goal_dir + 0.3)
+        right_clearance = self.get_clearance_in_direction(start_x, start_y, goal_dir - 0.3)
+
+        # If ANY of these directions has good clearance, forward is NOT blocked
+        max_clearance = max(forward_clearance, left_clearance, right_clearance)
+
+        is_blocked = max_clearance < min_clearance
+
+        if self.debug_mode and is_blocked:
+            self.get_logger().info(
+                f"🚧 Forward path blocked: clearances = "
+                f"center={forward_clearance:.2f}m, left={left_clearance:.2f}m, right={right_clearance:.2f}m"
+            )
+
+        return is_blocked
     
     def optimization_timer_callback(self):
         """Optimization timer"""

@@ -1440,6 +1440,23 @@ class ControllerNode(Node):
                 if self.debug_mode and self.control_counter % 50 == 0:
                     self.get_logger().info(f"🔄 Rotating in place (no mods): v={v:.3f}, w={w:.3f}")
 
+            # **NEW: Check if we're needlessly going backward when forward is clear**
+            if self.scan_ranges and len(self.scan_ranges) > 0 and v < 0:
+                forward_ranges = []
+                for i, angle in enumerate(self.scan_angles):
+                    if abs(angle) < math.radians(30):  # ±30° = 60° cone
+                        if 0.1 < self.scan_ranges[i] < 50.0:
+                            forward_ranges.append(self.scan_ranges[i])
+
+                if forward_ranges:
+                    forward_clearance = min(forward_ranges)
+                    if forward_clearance > 1.0:
+                        if self.debug_mode:
+                            self.get_logger().warn(
+                                f"⚠️ Blocking backward motion (v={v:.3f}) - forward clear ({forward_clearance:.2f}m)"
+                            )
+                        v = 0.2  # Force slow forward motion instead
+
             self.update_statistics(v)
             self.publish_cmd(float(v), float(w))
 
