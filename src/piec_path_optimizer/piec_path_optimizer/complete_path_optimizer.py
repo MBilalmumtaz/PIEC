@@ -210,6 +210,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
+            'max_pinn_calls_per_generation': 6,
         }
         
         # Declare all parameters
@@ -256,6 +257,7 @@ class CompletePathOptimizer(Node):
         self.min_escape_distance = self.get_parameter('min_escape_distance').value
         self.escape_backup_distance = self.get_parameter('escape_backup_distance').value
         self.escape_lateral_distance = self.get_parameter('escape_lateral_distance').value
+        self.max_pinn_calls_per_generation = self.get_parameter('max_pinn_calls_per_generation').value
     
     def initialize_obstacle_grid(self):
         """Initialize obstacle and free space grids"""
@@ -330,50 +332,13 @@ class CompletePathOptimizer(Node):
         except Exception as e:
             self.get_logger().debug(f"PINN connection check failed: {e}")
     def test_pinn_connection(self):
-        """Test PINN connection with a simple path"""
-        if not self.use_pinn or not self.pinn_service_available:
-            self.get_logger().warn("PINN not enabled or not available")
-            return False
-        
-        # Create a simple test path
-        test_path = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]])
-        
-        self.get_logger().info("🧪 Testing PINN connection...")
-        
-        try:
-            # Use LONGER timeout for test
-            original_timeout = self.pinn_call_timeout
-            self.pinn_call_timeout = 2.0  # Increase to 2 seconds for test
-            
-            result = self.call_pinn_service_optimized(test_path)
-            
-            # Restore original timeout
-            self.pinn_call_timeout = original_timeout
-            
-            if result and result.get('success', False):
-                energy = result.get('energy', 0.0)
-                stability = result.get('stability', 0.0)
-                response_time = result.get('response_time', 0.0)
-                
-                self.get_logger().info(f"✅ PINN test SUCCESSFUL!")
-                self.get_logger().info(f"   Energy: {energy:.2f} J")
-                self.get_logger().info(f"   Stability: {stability:.3f}")
-                self.get_logger().info(f"   Response time: {response_time:.3f} s")
-                
-                # Also test if we can get the PINN service output
-                self.get_logger().info(f"   Looking for PINN service output like: 'PINN Service: Request #X, Energy=X.XXJ'")
-                
-                return True
-            else:
-                if result and result.get('timeout', False):
-                    self.get_logger().warn("❌ PINN test TIMEOUT")
-                else:
-                    self.get_logger().warn("❌ PINN test FAILED")
-                return False
-                
-        except Exception as e:
-            self.get_logger().error(f"❌ PINN test ERROR: {e}")
-            return False
+        """Test PINN connection - skipped at startup; first optimization will validate"""
+        if self.use_pinn and self.pinn_service_available:
+            self.get_logger().info(
+                "🔬 PINN service connected. Will validate on first optimization."
+            )
+            return True
+        return False
 # Update the call_pinn_service_optimized method to properly handle timeouts:
     def call_pinn_service_optimized(self, path_array):
         """Call PINN service with proper timeout handling - FIXED VERSION"""
@@ -576,22 +541,9 @@ class CompletePathOptimizer(Node):
         return angle_diff > math.radians(threshold_degrees)
     
     def should_use_simple_straight_path(self, start_x, start_y, goal_x, goal_y):
-        """Determine if we should use a simple straight path vs curved/optimized path"""
-        # Use simple straight path if:
-        # 1. Path is clear of obstacles AND
-        # 2. Goal doesn't require significant turning (< 30 degrees)
-        
-        # Check if path is clear
-        if not self.is_straight_path_clear(start_x, start_y, goal_x, goal_y):
-            return False  # Need curved/optimized path to avoid obstacles
-        
-        # Check if significant turning is required
-        if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, 
-                                             threshold_degrees=self.significant_turning_threshold_deg):
-            return False  # Need curved path for smooth turning
-        
-        # Path is clear and doesn't require significant turning
-        return True
+        """Check if simple straight path is sufficient - DISABLED to force PINN optimization"""
+        # Always return False to force PINN optimization for research validation
+        return False
     
     def should_update_path(self, start_x, start_y):
         """Check if path should be updated based on robot movement - BUG FIX for frequent regeneration"""
@@ -1552,7 +1504,9 @@ class CompletePathOptimizer(Node):
         if seed_path is not None:
             if self.debug_mode:
                 self.get_logger().info("🌱 Seeding population with curved path")
-            population[0] = seed_path
+            # Ensure seed path starts at exact robot position
+            seed_path_corrected = [(start_x, start_y)] + [(p[0], p[1]) for p in seed_path[1:]]
+            population[0] = seed_path_corrected
         
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
         
@@ -1592,7 +1546,7 @@ class CompletePathOptimizer(Node):
                 # Relaxed conditions for using PINN:
                 if (self.use_pinn and self.pinn_service_available and
                         obstacle_cost < self.obstacle_penalty_weight * 15 and
-                        pinn_calls_this_generation < pop_size):
+                        pinn_calls_this_generation < self.max_pinn_calls_per_generation):
 
                     # Use PINN for 80% of eligible paths
                     if random.random() < 0.8:
