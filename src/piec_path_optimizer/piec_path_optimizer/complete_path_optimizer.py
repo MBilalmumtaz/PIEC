@@ -1777,79 +1777,84 @@ class CompletePathOptimizer(Node):
     def initialize_enhanced_population(self, start_x, start_y, goal_x, goal_y, pop_size):
         """Initialize enhanced population"""
         population = []
-        
-        # Always include a straight line path
-        straight_path = [(start_x, start_y), (goal_x, goal_y)]
+        n = max(self.waypoint_count, 2)
+
+        # Always include a straight line path with full waypoint_count waypoints
+        straight_path = [
+            (start_x + i / (n - 1) * (goal_x - start_x),
+             start_y + i / (n - 1) * (goal_y - start_y))
+            for i in range(n)
+        ]
         population.append(straight_path)
-        
+
         # Check if path is mostly clear
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
         is_clear_path = self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, min(distance, 3.0))
-        
+
         # Add more straight paths if clear
         if is_clear_path:
             for i in range(min(3, pop_size - 1)):
                 population.append(straight_path)
-        
+
         free_space_path = self.generate_free_space_focused_path(start_x, start_y, goal_x, goal_y)
         if free_space_path:
             population.append(free_space_path)
-        
+
         quick_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
         if quick_path:
             population.append(quick_path)
-        
+
         # Fill the rest with variations, but reduce exploration for clear paths
         remaining = pop_size - len(population)
-        
+
         for i in range(remaining):
             path = []
             path.append((start_x, start_y))
-            
-            # Reduce exploration for clear paths
-            if is_clear_path:
-                # Mostly straight paths with minor deviations
-                num_waypoints = 2  # Just start and goal for clear paths
-                path.append((goal_x, goal_y))
-            else:
-                num_waypoints = random.randint(2, min(4, self.waypoint_count))
-                
-                for j in range(1, num_waypoints - 1):
-                    t = j / (num_waypoints - 1)
-                    
-                    base_x = start_x + t * (goal_x - start_x)
-                    base_y = start_y + t * (goal_y - start_y)
-                    
-                    if random.random() < self.exploration_factor * 0.5:  # Reduce exploration
-                        free_directions = self.find_free_space_directions(base_x, base_y, goal_x, goal_y)
-                        if free_directions:
-                            angle, clearance, _ = random.choice(free_directions[:2])
-                            max_dev = min(clearance * 0.3, 0.5)  # Reduce deviation
-                            dev_dist = random.uniform(0, max_dev)
-                            
-                            waypoint_x = base_x + dev_dist * math.cos(angle)
-                            waypoint_y = base_y + dev_dist * math.sin(angle)
-                        else:
-                            angle = random.uniform(0, 2 * math.pi)
-                            max_dev = distance * 0.1  # Reduce deviation
-                            dev_dist = random.uniform(0, max_dev)
-                            
-                            waypoint_x = base_x + dev_dist * math.cos(angle)
-                            waypoint_y = base_y + dev_dist * math.sin(angle)
-                    else:
-                        max_dev = distance * 0.1  # Reduce deviation
-                        angle = random.uniform(0, 2 * math.pi)
+
+            # Use waypoint_count waypoints for all population members
+            num_waypoints = n
+
+            for j in range(1, num_waypoints - 1):
+                t = j / (num_waypoints - 1)
+
+                base_x = start_x + t * (goal_x - start_x)
+                base_y = start_y + t * (goal_y - start_y)
+
+                # Keep first waypoint (j==1) at exact linear position to avoid
+                # start-region random offsets that cause path-start mismatches
+                if j == 1:
+                    waypoint_x = base_x
+                    waypoint_y = base_y
+                elif random.random() < self.exploration_factor * 0.5:  # Reduce exploration
+                    free_directions = self.find_free_space_directions(base_x, base_y, goal_x, goal_y)
+                    if free_directions:
+                        angle, clearance, _ = random.choice(free_directions[:2])
+                        max_dev = min(clearance * 0.3, 0.5)  # Reduce deviation
                         dev_dist = random.uniform(0, max_dev)
-                        
+
                         waypoint_x = base_x + dev_dist * math.cos(angle)
                         waypoint_y = base_y + dev_dist * math.sin(angle)
-                    
-                    path.append((waypoint_x, waypoint_y))
-            
-                path.append((goal_x, goal_y))
-            
+                    else:
+                        angle = random.uniform(0, 2 * math.pi)
+                        max_dev = distance * 0.1  # Reduce deviation
+                        dev_dist = random.uniform(0, max_dev)
+
+                        waypoint_x = base_x + dev_dist * math.cos(angle)
+                        waypoint_y = base_y + dev_dist * math.sin(angle)
+                else:
+                    max_dev = distance * 0.1  # Reduce deviation
+                    angle = random.uniform(0, 2 * math.pi)
+                    dev_dist = random.uniform(0, max_dev)
+
+                    waypoint_x = base_x + dev_dist * math.cos(angle)
+                    waypoint_y = base_y + dev_dist * math.sin(angle)
+
+                path.append((waypoint_x, waypoint_y))
+
+            path.append((goal_x, goal_y))
+
             population.append(path)
-        
+
         return population
     def mutate_with_free_space(self, path, start_x, start_y, goal_x, goal_y):
         """Mutate with free space"""
@@ -1969,22 +1974,29 @@ class CompletePathOptimizer(Node):
                         best_idx = idx
             
             if best_idx != -1 and best_idx < len(population):
-                new_population.append(population[best_idx])
-                
+                selected = population[best_idx]
+                # Preserve all waypoints: interpolate if path is shorter than waypoint_count
+                if len(selected) < self.waypoint_count:
+                    selected = self._interpolate_path_to_count(selected, self.waypoint_count)
+                new_population.append(selected)
+
                 if random.random() < self.mutation_rate:
                     mutated = self.mutate_with_free_space(
                         new_population[-1],
-                        population[best_idx][0][0],
-                        population[best_idx][0][1],
-                        population[best_idx][-1][0],
-                        population[best_idx][-1][1]
+                        new_population[-1][0][0],
+                        new_population[-1][0][1],
+                        new_population[-1][-1][0],
+                        new_population[-1][-1][1]
                     )
                     new_population[-1] = mutated
             else:
                 if valid_indices:
                     idx = random.choice(valid_indices)
                     if idx < len(population):
-                        new_population.append(population[idx])
+                        selected = population[idx]
+                        if len(selected) < self.waypoint_count:
+                            selected = self._interpolate_path_to_count(selected, self.waypoint_count)
+                        new_population.append(selected)
         
         return new_population
     
@@ -2282,6 +2294,45 @@ class CompletePathOptimizer(Node):
         # Trigger optimization
         self.trigger_optimization()
     
+    def _interpolate_path_to_count(self, path_points, target_count):
+        """Interpolate a path to have exactly target_count evenly-spaced waypoints."""
+        if len(path_points) < 2 or target_count <= 1:
+            return path_points
+
+        # Build cumulative distance array
+        distances = [0.0]
+        for i in range(1, len(path_points)):
+            seg = math.hypot(
+                path_points[i][0] - path_points[i - 1][0],
+                path_points[i][1] - path_points[i - 1][1]
+            )
+            distances.append(distances[-1] + seg)
+
+        total = distances[-1]
+        if total < 1e-6:
+            return path_points
+
+        result = []
+        j = 0
+        for k in range(target_count):
+            d = k / (target_count - 1) * total
+            while j < len(distances) - 1 and distances[j + 1] < d:
+                j += 1
+            if j >= len(path_points) - 1:
+                result.append(path_points[-1])
+            else:
+                seg_len = distances[j + 1] - distances[j]
+                t = (d - distances[j]) / seg_len if seg_len > 1e-6 else 0.0
+                x = path_points[j][0] + t * (path_points[j + 1][0] - path_points[j][0])
+                y = path_points[j][1] + t * (path_points[j + 1][1] - path_points[j][1])
+                result.append((x, y))
+
+        return result
+
+    def smooth_path_for_controller(self, path_points, num_points=30):
+        """Interpolate path to num_points evenly-spaced waypoints for smooth controller tracking."""
+        return self._interpolate_path_to_count(path_points, num_points)
+
     def publish_path(self, path_points):
         """Publish path - FIXED to always use actual goal WITH VELOCITY INFO"""
         if path_points is None or len(path_points) == 0:
@@ -2317,7 +2368,10 @@ class CompletePathOptimizer(Node):
             last_x, last_y = path_points[-1]
             if math.hypot(last_x - goal_x, last_y - goal_y) > 0.1:
                 path_points[-1] = (goal_x, goal_y)
-        
+
+        # Interpolate to 30 evenly-spaced waypoints for smooth controller tracking
+        path_points = self.smooth_path_for_controller(path_points, num_points=30)
+
         path = Path()
         path.header.frame_id = 'odom'
         path.header.stamp = self.get_clock().now().to_msg()
