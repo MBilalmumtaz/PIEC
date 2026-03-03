@@ -203,7 +203,7 @@ class ControllerNode(Node):
         )
 
         # Subscribers
-        self.create_subscription(Path, '/piec/path', self.path_callback, 10)
+        self.create_subscription(Path, self.path_topic, self.path_callback, 10)
         self.create_subscription(Odometry, '/ukf/odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, self.scan_topic, self.scan_callback, scan_qos)
         self.create_subscription(PoseStamped, '/goal_pose', self.goal_callback, 10)
@@ -330,6 +330,7 @@ class ControllerNode(Node):
             'prefer_free_space_turns': True,
             'use_pinn_in_controller': False,
             'scan_topic': '/scan_fixed',
+            'path_topic': '/piec/path',
         }
 
         # Load from YAML if file exists
@@ -406,6 +407,7 @@ class ControllerNode(Node):
         self.free_space_update_rate = float(self.get_parameter('free_space_update_rate').value)
         self.prefer_free_space_turns = self.get_parameter('prefer_free_space_turns').value
         self.scan_topic = self.get_parameter('scan_topic').value
+        self.path_topic = self.get_parameter('path_topic').value
 
     def update_free_space_directions(self):
         """Update available free space directions"""

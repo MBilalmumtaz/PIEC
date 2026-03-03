@@ -1448,11 +1448,26 @@ class CompletePathOptimizer(Node):
                     seed_path=curved_path_seed
                 )
             
-            if best_path is not None:
-                self.publish_path(best_path)
-            else:
-                fallback = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
-                self.publish_path(fallback)
+            if best_path is None or len(best_path) < 2:
+                best_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
+
+            # Validate path start and end positions before publishing
+            deviation_start = math.hypot(best_path[0][0] - start_x, best_path[0][1] - start_y)
+            deviation_end = math.hypot(best_path[-1][0] - goal_x, best_path[-1][1] - goal_y)
+
+            if deviation_start > 0.1:
+                self.get_logger().error(
+                    f"❌ Path start error: {deviation_start:.3f}m. Forcing correction."
+                )
+                best_path[0] = (start_x, start_y)
+
+            if deviation_end > 0.1:
+                self.get_logger().warn(
+                    f"⚠️ Path end error: {deviation_end:.3f}m. Forcing correction."
+                )
+                best_path[-1] = (goal_x, goal_y)
+
+            self.publish_path(best_path)
             
             elapsed = time.time() - start_time
             
@@ -1504,8 +1519,10 @@ class CompletePathOptimizer(Node):
         if seed_path is not None:
             if self.debug_mode:
                 self.get_logger().info("🌱 Seeding population with curved path")
-            # Ensure seed path starts at exact robot position
-            seed_path_corrected = [(start_x, start_y)] + [(p[0], p[1]) for p in seed_path[1:]]
+            # Ensure seed path starts at exact robot position and ends at exact goal
+            seed_path_corrected = (
+                [(start_x, start_y)] + list(seed_path[1:-1]) + [(goal_x, goal_y)]
+            )
             population[0] = seed_path_corrected
         
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
@@ -2375,15 +2392,14 @@ class CompletePathOptimizer(Node):
         path = Path()
         path.header.frame_id = 'odom'
         path.header.stamp = self.get_clock().now().to_msg()
-        
-        total_length = self.calculate_path_length(np.array([[p[0], p[1]] for p in path_points]))
-        
+
         for i, (x, y) in enumerate(path_points):
             pose = PoseStamped()
             pose.header = path.header
             pose.pose.position.x = x
             pose.pose.position.y = y
-            
+            pose.pose.position.z = 0.0
+
             # Calculate orientation
             if i < len(path_points) - 1:
                 next_x, next_y = path_points[i + 1]
@@ -2395,40 +2411,9 @@ class CompletePathOptimizer(Node):
                     yaw = math.atan2(y - prev_y, x - prev_x)
                 else:
                     yaw = 0.0
-            
+
             pose.pose.orientation = self.yaw_to_quaternion(yaw)
-            
-            # Add velocity information in pose (store in orientation if needed, or use covariance)
-            # We'll add a small marker in the pose for velocity
-            if i == 0:
-                # Start with moderate speed
-                pose.pose.position.z = 0.8  # Use z for velocity indicator (0.8 m/s)
-            elif i == len(path_points) - 1:
-                # Slow down at goal
-                pose.pose.position.z = 0.1
-            else:
-                # Calculate speed based on straightness
-                if i < len(path_points) - 1:
-                    segment_length = math.hypot(path_points[i+1][0] - x, path_points[i+1][1] - y)
-                    if total_length > 0:
-                        # Higher speed for straighter paths
-                        curvature = 0.0
-                        if i > 0 and i < len(path_points) - 1:
-                            # Simple curvature calculation
-                            p1 = path_points[i-1]
-                            p2 = path_points[i]
-                            p3 = path_points[i+1]
-                            v1 = np.array([p2[0] - p1[0], p2[1] - p1[1]])
-                            v2 = np.array([p3[0] - p2[0], p3[1] - p2[1]])
-                            if np.linalg.norm(v1) > 0 and np.linalg.norm(v2) > 0:
-                                v1_norm = v1 / np.linalg.norm(v1)
-                                v2_norm = v2 / np.linalg.norm(v2)
-                                curvature = math.acos(np.clip(np.dot(v1_norm, v2_norm), -1.0, 1.0))
-                        
-                        # Higher speed for lower curvature
-                        speed = 1.2 - min(curvature, 1.0)  # 1.2 m/s max, reduce with curvature
-                        pose.pose.position.z = max(0.3, min(speed, 1.2))  # Clamp between 0.3 and 1.2 m/s
-            
+
             path.poses.append(pose)
         
         self.path_pub.publish(path)
