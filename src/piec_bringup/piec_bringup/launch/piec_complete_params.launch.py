@@ -200,7 +200,7 @@ def generate_launch_description():
                 "generations": 4,
                 "optimization_timeout": 2.0,
                 "planning_rate": 1.5,
-                "waypoint_count": 10,
+                "waypoint_count": 12,
                 "max_curvature": 1.5,
                 "path_smoothing": True,
                 "max_pinn_calls_per_generation": 6,
