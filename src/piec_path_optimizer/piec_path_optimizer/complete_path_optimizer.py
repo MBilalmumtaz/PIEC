@@ -58,6 +58,10 @@ TURN_ANGLE_CURVATURE_SCALE = 200.0  # degrees-to-curvature scaling factor
 SEED_PRESERVATION_RATIO = 0.5  # fraction of generations to preserve curved seed
 CURVE_PRESERVATION_FACTOR = 0.5  # scale factor for second waypoint during start correction
 
+# Bezier curve generation constants
+BEZIER_CONTROL_POINT_RATIO = 1.0 / 3.0  # control-point offset as a fraction of total distance
+BEZIER_WAYPOINT_SPACING = 0.3  # metres between sampled waypoints on the Bezier curve
+
 
 def dominates(a, b):
     """Return True if a dominates b"""
@@ -1354,38 +1358,49 @@ class CompletePathOptimizer(Node):
         return path
     
     def generate_curved_path_for_turning(self, start_x, start_y, goal_x, goal_y):
-        """Generate a path with intermediate waypoints for goals requiring turning"""
-        path = []
-        path.append((start_x, start_y))
-        
+        """Generate a cubic Bezier curve path for goals requiring turning.
+
+        Uses the formula B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3 where
+        P0 is the start, P1/P2 are control points, and P3 is the goal.
+        """
         # Get robot orientation
         if self.robot_pose is not None:
             robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
         else:
             robot_yaw = 0.0
-        
+
         goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
-        
-        # Add intermediate waypoints along a curve
-        # Note: For short distances, uses minimum of 3 waypoints. For longer distances,
-        # spacing is approximately 0.5m but varies based on total distance
-        num_waypoints = max(3, int(distance / 0.5))  # At least 3 waypoints
-        
-        for i in range(1, num_waypoints):
+
+        # Control point offset: fraction of distance along each tangent
+        cp_offset = distance * BEZIER_CONTROL_POINT_RATIO
+
+        # P1: depart from start along robot heading
+        p1_x = start_x + cp_offset * math.cos(robot_yaw)
+        p1_y = start_y + cp_offset * math.sin(robot_yaw)
+
+        # P2: arrive at goal from the direction of the straight-line approach
+        p2_x = goal_x - cp_offset * math.cos(goal_angle)
+        p2_y = goal_y - cp_offset * math.sin(goal_angle)
+
+        # Sample the Bezier curve; at least 10 waypoints for smooth curvature
+        num_waypoints = max(10, int(distance / BEZIER_WAYPOINT_SPACING))
+
+        path = []
+        for i in range(num_waypoints + 1):
             t = i / num_waypoints
-            
-            # Interpolate angle from robot_yaw to goal_angle
-            angle_diff = math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw))
-            current_angle = robot_yaw + t * angle_diff
-            current_distance = t * distance
-            
-            wp_x = start_x + current_distance * math.cos(current_angle)
-            wp_y = start_y + current_distance * math.sin(current_angle)
-            
-            path.append((wp_x, wp_y))
-        
-        path.append((goal_x, goal_y))
+            mt = 1.0 - t
+            # Cubic Bezier: B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
+            bx = (mt ** 3 * start_x
+                  + 3.0 * mt ** 2 * t * p1_x
+                  + 3.0 * mt * t ** 2 * p2_x
+                  + t ** 3 * goal_x)
+            by = (mt ** 3 * start_y
+                  + 3.0 * mt ** 2 * t * p1_y
+                  + 3.0 * mt * t ** 2 * p2_y
+                  + t ** 3 * goal_y)
+            path.append((bx, by))
+
         return path
     
     def run_enhanced_optimization(self):
@@ -1437,6 +1452,12 @@ class CompletePathOptimizer(Node):
                     )
                 # Generate curved path but do NOT return - use it as optimization seed
                 curved_path_seed = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
+                if self.debug_mode:
+                    seed_array = np.array([[p[0], p[1]] for p in curved_path_seed])
+                    seed_curvature = self.calculate_curvature(seed_array)
+                    self.get_logger().info(
+                        f"🎨 Generated Bezier curve: curvature={seed_curvature:.2f}"
+                    )
 
             # Get current PINN stats before optimization
             pinn_stats_before = self.objective_evaluator.pinn_usage
@@ -2440,23 +2461,10 @@ class CompletePathOptimizer(Node):
                         f"⚠️ Path start mismatch detected: deviation={start_deviation:.3f}m. "
                         f"Correcting path[0] from ({start_x:.3f}, {start_y:.3f}) to ({current_x:.3f}, {current_y:.3f})"
                     )
-                # Correct start while preserving curve shape (Strategy 4)
-                if len(path_points) >= 3:
-                    original_direction = math.atan2(
-                        path_points[1][1] - path_points[0][1],
-                        path_points[1][0] - path_points[0][0]
-                    )
-                    segment_length = math.hypot(
-                        path_points[2][0] - path_points[1][0],
-                        path_points[2][1] - path_points[1][1]
-                    )
-                    path_points[0] = (current_x, current_y)
-                    path_points[1] = (
-                        current_x + segment_length * CURVE_PRESERVATION_FACTOR * math.cos(original_direction),
-                        current_y + segment_length * CURVE_PRESERVATION_FACTOR * math.sin(original_direction)
-                    )
-                else:
-                    path_points[0] = (current_x, current_y)
+                # Correct start by translating the entire path to preserve curve shape
+                dx = current_x - start_x
+                dy = current_y - start_y
+                path_points = [(x + dx, y + dy) for x, y in path_points]
             elif start_deviation > PATH_START_WARNING_THRESHOLD:
                 # Log warning for moderate deviations without correction
                 if self.debug_mode:
