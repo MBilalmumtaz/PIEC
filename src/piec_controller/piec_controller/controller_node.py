@@ -328,7 +328,7 @@ class ControllerNode(Node):
             'free_space_min_clearance': 0.8,  # Minimum clearance for free space
             'free_space_update_rate': 3.0,  # Hz
             'prefer_free_space_turns': True,
-            'use_pinn_in_controller': True,
+            'use_pinn_in_controller': False,
             'scan_topic': '/scan_fixed',
         }
 
