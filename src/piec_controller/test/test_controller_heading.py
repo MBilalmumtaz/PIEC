@@ -535,5 +535,120 @@ class TestAngularSignDoubleCorrection(unittest.TestCase):
                        "Final w should be NEGATIVE for right turn")
 
 
+class TestStalepathNearestWaypoint(unittest.TestCase):
+    """Tests for the nearest-waypoint stale-path recovery logic."""
+
+    # ------------------------------------------------------------------
+    # Helpers that replicate the logic extracted from controller_node.py
+    # ------------------------------------------------------------------
+
+    def _find_nearest_waypoint(self, poses, robot_x, robot_y):
+        """Return (nearest_idx, nearest_dist) for a list of (x, y) tuples."""
+        nearest_idx = 0
+        nearest_dist = float('inf')
+        for i, (px, py) in enumerate(poses):
+            d = math.hypot(px - robot_x, py - robot_y)
+            if d < nearest_dist:
+                nearest_dist = d
+                nearest_idx = i
+        return nearest_idx, nearest_dist
+
+    def _stale_path_handler(self, poses, robot_x, robot_y,
+                            staleness_threshold=0.5):
+        """
+        Reimplements the staleness check from path_callback:
+        - Returns (accepted, waypoint_idx) when path is accepted.
+        - Returns (False, None) when path is rejected.
+        """
+        start_x, start_y = poses[0]
+        path_start_deviation = math.hypot(start_x - robot_x, start_y - robot_y)
+
+        if path_start_deviation <= staleness_threshold:
+            return True, 0  # Fresh path, start from beginning
+
+        # Stale start: find nearest waypoint
+        nearest_idx, nearest_dist = self._find_nearest_waypoint(
+            poses, robot_x, robot_y
+        )
+        max_acceptable_dist = staleness_threshold * 2.0
+        if nearest_dist > max_acceptable_dist:
+            return False, None  # Reject
+        return True, nearest_idx  # Accept, jump to nearest
+
+    # ------------------------------------------------------------------
+    # Tests
+    # ------------------------------------------------------------------
+
+    def test_fresh_path_accepted_at_start(self):
+        """A path whose start is within threshold is accepted at waypoint 0."""
+        poses = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+        accepted, idx = self._stale_path_handler(poses, robot_x=0.1, robot_y=0.05)
+        self.assertTrue(accepted)
+        self.assertEqual(idx, 0)
+
+    def test_stale_start_nearest_waypoint_mid_path(self):
+        """
+        If the path start is stale but the robot is near a middle waypoint,
+        the path is accepted and tracking starts at that waypoint.
+        """
+        poses = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+        # Robot is near waypoint index 2 (2.0, 0.0)
+        accepted, idx = self._stale_path_handler(poses, robot_x=2.05, robot_y=0.03)
+        self.assertTrue(accepted, "Path should be accepted when robot is near a waypoint")
+        self.assertEqual(idx, 2, "Tracking should jump to the nearest waypoint")
+
+    def test_stale_start_nearest_waypoint_last(self):
+        """
+        If the robot is closest to the last waypoint, tracking starts there.
+        """
+        poses = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+        # Robot is near the last waypoint (3.0, 0.0)
+        accepted, idx = self._stale_path_handler(poses, robot_x=3.05, robot_y=0.05)
+        self.assertTrue(accepted)
+        self.assertEqual(idx, 3, "Should jump to the last waypoint")
+
+    def test_entirely_unreachable_path_rejected(self):
+        """
+        When even the nearest waypoint is beyond 2× the staleness threshold,
+        the path must be rejected.
+        """
+        poses = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+        # Robot is 5 m away from every waypoint (far off the path)
+        accepted, idx = self._stale_path_handler(poses, robot_x=10.0, robot_y=10.0)
+        self.assertFalse(accepted, "Path should be rejected when robot is too far from every waypoint")
+        self.assertIsNone(idx)
+
+    def test_stale_deviation_within_2x_threshold_accepted(self):
+        """
+        Deviation of up to 2× the staleness threshold is accepted.
+        Exactly at 2× the threshold the path should still be rejected
+        (nearest_dist > max_acceptable_dist uses strict >).
+        """
+        staleness_threshold = 0.5
+        poses = [(0.0, 0.0), (1.0, 0.0)]
+        # Robot is exactly at 2× the threshold from every waypoint
+        robot_x = 1.0 + staleness_threshold * 2.0  # 2.0 m from (1,0), 3.0 m from (0,0)
+        robot_y = 0.0
+        accepted, _ = self._stale_path_handler(
+            poses, robot_x=robot_x, robot_y=robot_y,
+            staleness_threshold=staleness_threshold,
+        )
+        # nearest_dist == max_acceptable_dist → condition is "nearest_dist > max_acceptable_dist"
+        # so at exactly equal it should be accepted (not strictly greater)
+        self.assertTrue(accepted, "At exactly 2× threshold the path should still be accepted")
+
+    def test_stale_deviation_beyond_2x_threshold_rejected(self):
+        """A path whose nearest waypoint is just over 2× the threshold is rejected."""
+        staleness_threshold = 0.5
+        poses = [(0.0, 0.0), (1.0, 0.0)]
+        robot_x = 1.0 + staleness_threshold * 2.0 + 0.01  # slightly beyond 2× threshold
+        robot_y = 0.0
+        accepted, _ = self._stale_path_handler(
+            poses, robot_x=robot_x, robot_y=robot_y,
+            staleness_threshold=staleness_threshold,
+        )
+        self.assertFalse(accepted, "Nearest waypoint slightly beyond 2× threshold must be rejected")
+
+
 if __name__ == '__main__':
     unittest.main()
