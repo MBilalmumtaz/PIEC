@@ -1464,33 +1464,36 @@ class CompletePathOptimizer(Node):
                 self.optimization_active = False
                 return
             
-            # NEW: Check if goal requires significant turning - use curved path
-            if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=30):
-                # Calculate angle for logging
+            # IMPROVED: Use curved path as seed for PINN optimization instead of returning early
+            curved_path_seed = None
+            if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=60):
                 robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
                 goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
                 angle_diff = abs(math.atan2(math.sin(goal_angle - robot_yaw), math.cos(goal_angle - robot_yaw)))
-                
+
                 if self.debug_mode:
-                    self.get_logger().info(f"🔄 Using curved path for turning (angle={math.degrees(angle_diff):.1f}°)")
-                curved_path = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
-                self.publish_path(curved_path)
-                self.optimization_active = False
-                return
-            
+                    self.get_logger().info(
+                        f"🔄 Large turn required (angle={math.degrees(angle_diff):.1f}°) - "
+                        f"using curved path as seed for PINN optimization"
+                    )
+                # Generate curved path but do NOT return - use it as optimization seed
+                curved_path_seed = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
+
             # Get current PINN stats before optimization
             pinn_stats_before = self.objective_evaluator.pinn_usage
             pinn_success_before = self.objective_evaluator.pinn_success
-            
+
             if self.stuck_count >= self.max_escape_attempts:
                 if self.debug_mode:
                     self.get_logger().warn("🚨 Multiple stuck attempts - using free-space focused path")
                 best_path = self.generate_free_space_focused_path(start_x, start_y, goal_x, goal_y)
             else:
+                # Pass curved path seed if available
                 best_path = self.run_enhanced_nsga2_with_free_space(
                     start_x, start_y, goal_x, goal_y,
                     self.population_size,
-                    self.generations
+                    self.generations,
+                    seed_path=curved_path_seed
                 )
             
             if best_path is not None:
@@ -1514,6 +1517,10 @@ class CompletePathOptimizer(Node):
                     )
                 else:
                     self.get_logger().info(f"✅ Optimization #{self.optimization_count} in {elapsed:.2f}s (no PINN calls)")
+            elif pinn_calls_this_optimization == 0:
+                self.get_logger().warn(
+                    "⚠️ PINN NOT USED in this optimization (early return or restrictive conditions)"
+                )
         
         except Exception as e:
             self.get_logger().error(f"Optimization error: {e}")
@@ -1531,18 +1538,33 @@ class CompletePathOptimizer(Node):
         
         finally:
             self.optimization_active = False
-    def run_enhanced_nsga2_with_free_space(self, start_x, start_y, goal_x, goal_y, pop_size, generations):
-        """NSGA-II with free space - USING YOUR NSGA2 MODULE - FIXED PINN calls"""
+    def run_enhanced_nsga2_with_free_space(self, start_x, start_y, goal_x, goal_y, pop_size, generations, seed_path=None):
+        """NSGA-II with free space - USING YOUR NSGA2 MODULE - FIXED PINN calls
+
+        Args:
+            seed_path: Optional pre-generated path to seed the population (e.g., curved path for turns)
+        """
         population = self.initialize_enhanced_population(
             start_x, start_y, goal_x, goal_y, pop_size
         )
+
+        # If seed path provided, replace first individual with seed
+        if seed_path is not None:
+            if self.debug_mode:
+                self.get_logger().info("🌱 Seeding population with curved path")
+            population[0] = seed_path
         
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
         
-        pinn_calls_this_generation = 0
-        pinn_success_this_generation = 0
-        
+        # Track PINN usage across all generations
+        total_pinn_calls = 0
+        total_pinn_success = 0
+
         for gen in range(generations):
+            # Reset per-generation counters
+            pinn_calls_this_generation = 0
+            pinn_success_this_generation = 0
+
             all_objectives = []
             valid_individuals = []
             
@@ -1564,17 +1586,23 @@ class CompletePathOptimizer(Node):
                 
                 deviation = abs(path_length - straight_line_length) / max(straight_line_length, 0.1)
                 
-                # FIXED: Only call PINN for promising paths
+                # IMPROVED: More aggressive PINN usage for better optimization
                 use_pinn_for_this = False
-                
-                # Conditions for using PINN:
-                if (self.use_pinn and self.pinn_service_available and 
-                    obstacle_cost < self.obstacle_penalty_weight * 8 and
-                    pinn_calls_this_generation < 12):
-                    
-                    # Use PINN for 50% of eligible paths
-                    if random.random() < 0.5:
+
+                # Relaxed conditions for using PINN:
+                if (self.use_pinn and self.pinn_service_available and
+                        obstacle_cost < self.obstacle_penalty_weight * 15 and
+                        pinn_calls_this_generation < pop_size):
+
+                    # Use PINN for 80% of eligible paths
+                    if random.random() < 0.8:
                         use_pinn_for_this = True
+
+                        if self.debug_mode:
+                            self.get_logger().debug(
+                                f"🔬 Using PINN for path {idx} in gen {gen} "
+                                f"(obstacle_cost={obstacle_cost:.2f})"
+                            )
                 
                 # Use the FIXED objective evaluator
                 objectives = self.objective_evaluator.evaluate_all_objectives_with_timeout(
@@ -1589,9 +1617,11 @@ class CompletePathOptimizer(Node):
                 # Track PINN usage
                 if use_pinn_for_this:
                     pinn_calls_this_generation += 1
+                    total_pinn_calls += 1
                     # Check if PINN provided valid results
                     if objectives[5] > 0.0 and objectives[5] < 1000.0:
                         pinn_success_this_generation += 1
+                        total_pinn_success += 1
                         if self.debug_mode:
                             self.get_logger().debug(f"PINN successful for path {idx}: energy={objectives[5]:.2f}")
                     else:
@@ -1658,12 +1688,13 @@ class CompletePathOptimizer(Node):
                     self.get_logger().debug(f"Optimization timeout after {gen+1} generations")
                 break
         
-        # Log PINN usage for this optimization
-        if pinn_calls_this_generation > 0 and self.debug_mode:
-            success_rate = (pinn_success_this_generation / pinn_calls_this_generation * 100) if pinn_calls_this_generation > 0 else 0
+        # Log total PINN usage across all generations
+        if total_pinn_calls > 0 and self.debug_mode:
+            overall_success_rate = (total_pinn_success / total_pinn_calls * 100)
             self.get_logger().info(
-                f"📈 PINN Stats: {pinn_calls_this_generation} calls, "
-                f"{pinn_success_this_generation} successful ({success_rate:.1f}%)"
+                f"🔬 NSGA-II PINN Summary: {total_pinn_calls} total calls, "
+                f"{total_pinn_success} successful ({overall_success_rate:.1f}%) "
+                f"across {generations} generations"
             )
         
         # Select best individual
