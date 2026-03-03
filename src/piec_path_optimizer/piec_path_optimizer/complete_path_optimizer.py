@@ -2452,25 +2452,51 @@ class CompletePathOptimizer(Node):
             current_x = self.robot_pose.pose.pose.position.x
             current_y = self.robot_pose.pose.pose.position.y
             start_x, start_y = path_points[0]
-            
+
             # Check if path start is too far from current position (staleness check)
             start_deviation = math.hypot(start_x - current_x, start_y - current_y)
             if start_deviation > PATH_START_DEVIATION_THRESHOLD:
+                # Find the waypoint on the path closest to the current robot position.
+                # Trimming from that waypoint avoids shifting the entire path into
+                # unknown/potentially unsafe space.
+                nearest_idx = 0
+                nearest_dist = float('inf')
+                for i, (px, py) in enumerate(path_points):
+                    d = math.hypot(px - current_x, py - current_y)
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest_idx = i
+
+                if nearest_idx < len(path_points) - 1:
+                    # Keep the remaining path after the nearest waypoint and anchor it
+                    # to the exact current robot position.
+                    path_points = [(current_x, current_y)] + list(path_points[nearest_idx + 1:])
+                else:
+                    # Robot is at or past the final waypoint.
+                    # Reconnect current position directly to the goal endpoint.
+                    # CRITICAL FIX 2 below will still enforce the exact goal coordinates.
+                    goal_pt = path_points[-1]
+                    dist_to_goal = math.hypot(current_x - goal_pt[0], current_y - goal_pt[1])
+                    if dist_to_goal < self.goal_completion_distance:
+                        # Already within goal tolerance – publish a minimal path so the
+                        # controller can recognise goal completion normally.
+                        path_points = [(current_x, current_y), goal_pt]
+                    else:
+                        path_points = [(current_x, current_y), goal_pt]
+
                 if self.debug_mode:
                     self.get_logger().warn(
-                        f"⚠️ Path start mismatch detected: deviation={start_deviation:.3f}m. "
-                        f"Correcting path[0] from ({start_x:.3f}, {start_y:.3f}) to ({current_x:.3f}, {current_y:.3f})"
+                        f"⚠️ Path start mismatch: deviation={start_deviation:.3f}m. "
+                        f"Trimmed to waypoint {nearest_idx} (nearest dist={nearest_dist:.3f}m), "
+                        f"anchored at ({current_x:.3f}, {current_y:.3f})"
                     )
-                # Correct start by translating the entire path to preserve curve shape
-                dx = current_x - start_x
-                dy = current_y - start_y
-                path_points = [(x + dx, y + dy) for x, y in path_points]
             elif start_deviation > PATH_START_WARNING_THRESHOLD:
-                # Log warning for moderate deviations without correction
+                # Minor deviation: snap path[0] to current position without trimming
+                path_points = [(current_x, current_y)] + list(path_points[1:])
                 if self.debug_mode:
                     self.get_logger().warn(
                         f"Path start deviation: {start_deviation:.3f}m "
-                        f"(within tolerance, no correction needed)"
+                        f"(minor correction applied)"
                     )
         
         # CRITICAL FIX 2: Ensure last point is actual goal

@@ -1181,16 +1181,41 @@ class ControllerNode(Node):
             robot_x = self.odom.pose.pose.position.x
             robot_y = self.odom.pose.pose.position.y
             path_start_deviation = math.hypot(start_x - robot_x, start_y - robot_y)
-            
-            # Reject paths with stale start positions (> path_staleness_threshold from robot)
+
             if path_start_deviation > self.path_staleness_threshold:
-                self.get_logger().warn(
-                    f"🚫 Rejecting stale path: start deviation={path_start_deviation:.3f}m. "
-                    f"Path starts at ({start_x:.3f}, {start_y:.3f}), robot at ({robot_x:.3f}, {robot_y:.3f})"
-                )
-                self.path = None
-                self.path_received = False
-                return
+                # Path start is stale. Instead of rejecting the path outright, find the
+                # nearest waypoint to the robot's current position and start tracking
+                # from there.  Only reject if no waypoint is close enough.
+                nearest_idx = 0
+                nearest_dist = float('inf')
+                for i, pose in enumerate(msg.poses):
+                    d = math.hypot(
+                        pose.pose.position.x - robot_x,
+                        pose.pose.position.y - robot_y
+                    )
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest_idx = i
+
+                max_acceptable_dist = self.path_staleness_threshold * 2.0
+                if nearest_dist > max_acceptable_dist:
+                    self.get_logger().warn(
+                        f"🚫 Rejecting stale path: nearest waypoint={nearest_dist:.3f}m away "
+                        f"(max {max_acceptable_dist:.3f}m). "
+                        f"Path starts at ({start_x:.3f}, {start_y:.3f}), "
+                        f"robot at ({robot_x:.3f}, {robot_y:.3f})"
+                    )
+                    self.path = None
+                    self.path_received = False
+                    return
+                else:
+                    # Accept path and jump to nearest waypoint
+                    self.current_waypoint_idx = nearest_idx
+                    self.get_logger().warn(
+                        f"⚠️ Stale path start ({path_start_deviation:.3f}m): "
+                        f"jumping to nearest waypoint {nearest_idx} "
+                        f"(dist={nearest_dist:.3f}m)"
+                    )
             elif path_start_deviation > self.path_staleness_warning_threshold:
                 # Log warning for moderate deviations
                 if self.debug_mode:
