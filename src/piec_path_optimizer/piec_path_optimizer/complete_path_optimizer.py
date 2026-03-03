@@ -51,6 +51,13 @@ from nsga2 import fast_non_dominated_sort, crowding_distance, nsga2_selection
 PATH_START_DEVIATION_THRESHOLD = 0.1  # meters - threshold for auto-correcting path start
 PATH_START_WARNING_THRESHOLD = 0.2  # meters - threshold for logging warnings
 
+# Curved path preservation constants
+MIN_TURN_CURVATURE_THRESHOLD = 0.3  # minimum curvature for a valid turning path
+STRAIGHT_PATH_PENALTY_MULTIPLIER = 20.0  # penalty scale for straight paths during turns
+TURN_ANGLE_CURVATURE_SCALE = 200.0  # degrees-to-curvature scaling factor
+SEED_PRESERVATION_RATIO = 0.5  # fraction of generations to preserve curved seed
+CURVE_PRESERVATION_FACTOR = 0.5  # scale factor for second waypoint during start correction
+
 
 def dominates(a, b):
     """Return True if a dominates b"""
@@ -1516,6 +1523,10 @@ class CompletePathOptimizer(Node):
         )
 
         # If seed path provided, replace first individual with seed
+        # requires_turn is True when a curved seed is given (seed_path is only provided
+        # by run_enhanced_optimization when requires_significant_turning() returns True)
+        seed_path_corrected = None
+        requires_turn = seed_path is not None
         if seed_path is not None:
             if self.debug_mode:
                 self.get_logger().info("🌱 Seeding population with curved path")
@@ -1524,7 +1535,7 @@ class CompletePathOptimizer(Node):
                 [(start_x, start_y)] + list(seed_path[1:-1]) + [(goal_x, goal_y)]
             )
             population[0] = seed_path_corrected
-        
+
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
         
         # Track PINN usage across all generations
@@ -1599,9 +1610,20 @@ class CompletePathOptimizer(Node):
                         if self.debug_mode:
                             self.get_logger().debug(f"PINN failed for path {idx}")
                 
+                # NEW: Penalize straight paths when a turn is required (Strategy 1)
+                if requires_turn:
+                    path_curvature = self.calculate_curvature(path_array)
+                    if path_curvature < MIN_TURN_CURVATURE_THRESHOLD:
+                        straight_penalty = (
+                            (MIN_TURN_CURVATURE_THRESHOLD - path_curvature)
+                            * STRAIGHT_PATH_PENALTY_MULTIPLIER
+                        )
+                        objectives = list(objectives)
+                        objectives[1] += straight_penalty
+
                 all_objectives.append(objectives)
                 valid_individuals.append(idx)
-            
+
             # After each generation, log PINN stats
             if pinn_calls_this_generation > 0 and self.debug_mode:
                 success_rate = (pinn_success_this_generation / pinn_calls_this_generation * 100) if pinn_calls_this_generation > 0 else 0
@@ -1652,7 +1674,13 @@ class CompletePathOptimizer(Node):
                     population = self.enhanced_selection(population, valid_individuals, all_objectives, pop_size)
             else:
                 population = self.enhanced_selection(population, valid_individuals, all_objectives, pop_size)
-            
+
+            # NEW: Curved seed preservation elitism (Strategy 2)
+            # Force curved seed to survive for the first SEED_PRESERVATION_RATIO of generations
+            if (requires_turn and seed_path_corrected is not None
+                    and gen < int(generations * SEED_PRESERVATION_RATIO)):
+                population[0] = seed_path_corrected
+
             # Early exit if timeout
             if time.time() - self.last_optimization_time > self.optimization_timeout:
                 if self.debug_mode:
@@ -1692,7 +1720,29 @@ class CompletePathOptimizer(Node):
                     best_idx = idx
             
             best_path = population[best_idx]
-            
+
+            # NEW: Post-selection curvature validation (Strategy 3)
+            if requires_turn and seed_path_corrected is not None:
+                required_angle_deg = 0.0
+                if self.robot_pose is not None:
+                    robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+                    goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+                    required_angle_deg = math.degrees(
+                        abs(math.atan2(
+                            math.sin(goal_angle - robot_yaw),
+                            math.cos(goal_angle - robot_yaw)
+                        ))
+                    )
+                is_valid, actual_curv = self.validate_path_curvature_for_turn(
+                    best_path, required_angle_deg
+                )
+                if not is_valid:
+                    self.get_logger().warn(
+                        f"⚠️ Selected path too straight (curvature={actual_curv:.3f}) "
+                        f"for required turn. Using curved seed instead."
+                    )
+                    best_path = seed_path_corrected
+
             # Evaluate best path with PINN for logging (non-blocking)
             best_path_array = np.array([[p[0], p[1]] for p in best_path])
             if self.use_pinn and self.pinn_service_available:
@@ -2254,28 +2304,49 @@ class CompletePathOptimizer(Node):
         """Calculate curvature"""
         if len(path_array) < 3:
             return 0.0
-        
+
         total_curvature = 0.0
         for i in range(1, len(path_array) - 1):
             p1 = path_array[i-1]
             p2 = path_array[i]
             p3 = path_array[i+1]
-            
+
             v1 = np.array([p2[0] - p1[0], p2[1] - p1[1]])
             v2 = np.array([p3[0] - p2[0], p3[1] - p2[1]])
-            
+
             norm1 = np.linalg.norm(v1)
             norm2 = np.linalg.norm(v2)
-            
+
             if norm1 > 0 and norm2 > 0:
                 v1_norm = v1 / norm1
                 v2_norm = v2 / norm2
                 dot_product = np.dot(v1_norm, v2_norm)
                 dot_product = np.clip(dot_product, -1.0, 1.0)
                 total_curvature += math.acos(dot_product)
-        
+
         return total_curvature / max(len(path_array) - 2, 1)
-    
+
+    def validate_path_curvature_for_turn(self, path, required_angle_deg):
+        """Validate that a path has adequate curvature for a required turn.
+
+        Args:
+            path: List of (x, y) tuples representing the path waypoints.
+            required_angle_deg: The required turning angle in degrees.
+
+        Returns:
+            Tuple of (is_valid: bool, actual_curvature: float). is_valid is False
+            when the path is too straight for the required turn.
+        """
+        path_array = np.array([[p[0], p[1]] for p in path])
+        actual_curvature = self.calculate_curvature(path_array)
+        min_curvature = max(
+            MIN_TURN_CURVATURE_THRESHOLD,
+            required_angle_deg / TURN_ANGLE_CURVATURE_SCALE
+        )
+        if actual_curvature < min_curvature:
+            return False, actual_curvature
+        return True, actual_curvature
+
     def get_min_clearance(self, path_array):
         """Get min clearance"""
         min_clearance = float('inf')
@@ -2369,8 +2440,23 @@ class CompletePathOptimizer(Node):
                         f"⚠️ Path start mismatch detected: deviation={start_deviation:.3f}m. "
                         f"Correcting path[0] from ({start_x:.3f}, {start_y:.3f}) to ({current_x:.3f}, {current_y:.3f})"
                     )
-                # Force path to start from current position
-                path_points[0] = (current_x, current_y)
+                # Correct start while preserving curve shape (Strategy 4)
+                if len(path_points) >= 3:
+                    original_direction = math.atan2(
+                        path_points[1][1] - path_points[0][1],
+                        path_points[1][0] - path_points[0][0]
+                    )
+                    segment_length = math.hypot(
+                        path_points[2][0] - path_points[1][0],
+                        path_points[2][1] - path_points[1][1]
+                    )
+                    path_points[0] = (current_x, current_y)
+                    path_points[1] = (
+                        current_x + segment_length * CURVE_PRESERVATION_FACTOR * math.cos(original_direction),
+                        current_y + segment_length * CURVE_PRESERVATION_FACTOR * math.sin(original_direction)
+                    )
+                else:
+                    path_points[0] = (current_x, current_y)
             elif start_deviation > PATH_START_WARNING_THRESHOLD:
                 # Log warning for moderate deviations without correction
                 if self.debug_mode:
