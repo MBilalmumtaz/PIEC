@@ -50,6 +50,9 @@ from nsga2 import fast_non_dominated_sort, crowding_distance, nsga2_selection
 # Path validation constants
 PATH_START_DEVIATION_THRESHOLD = 0.1  # meters - threshold for auto-correcting path start
 PATH_START_WARNING_THRESHOLD = 0.2  # meters - threshold for logging warnings
+# When the nearest waypoint on the stale path exceeds this distance from the robot,
+# generate a fresh quick path instead of trimming the stale path.
+PATH_REPLAN_NEAREST_WAYPOINT_DIST = 0.5  # metres
 
 # Curved path preservation constants
 MIN_TURN_CURVATURE_THRESHOLD = 0.3  # minimum curvature for a valid turning path
@@ -1747,7 +1750,13 @@ class CompletePathOptimizer(Node):
                 required_angle_deg = 0.0
                 if self.robot_pose is not None:
                     robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
-                    goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+                    # Use the current robot position (not the stale start captured at
+                    # optimization start) so that the required turn angle reflects the
+                    # robot's actual heading relative to the goal after the long
+                    # optimization period.
+                    current_rx = self.robot_pose.pose.pose.position.x
+                    current_ry = self.robot_pose.pose.pose.position.y
+                    goal_angle = math.atan2(goal_y - current_ry, goal_x - current_rx)
                     required_angle_deg = math.degrees(
                         abs(math.atan2(
                             math.sin(goal_angle - robot_yaw),
@@ -2467,22 +2476,33 @@ class CompletePathOptimizer(Node):
                         nearest_dist = d
                         nearest_idx = i
 
-                if nearest_idx < len(path_points) - 1:
-                    # Keep the remaining path after the nearest waypoint and anchor it
-                    # to the exact current robot position.
-                    path_points = [(current_x, current_y)] + list(path_points[nearest_idx + 1:])
+                # If the nearest waypoint is very far away, the stale path has
+                # diverged too much from the robot's current position.  Generate a
+                # fresh direct path to the goal rather than trying to re-use the
+                # stale trimmed segment.
+                if nearest_dist > PATH_REPLAN_NEAREST_WAYPOINT_DIST and self.goal_position:
+                    goal_x_fb, goal_y_fb = self.goal_position
+                    path_points = self.generate_quick_response_path(
+                        current_x, current_y, goal_x_fb, goal_y_fb
+                    )
+                elif nearest_idx < len(path_points) - 1:
+                    # Keep the remaining path from the nearest waypoint onward and
+                    # anchor the start to the exact current robot position.
+                    # Including path_points[nearest_idx] (not nearest_idx + 1) ensures
+                    # the first segment follows the intended path direction instead of
+                    # potentially skipping over a waypoint that curves around an obstacle.
+                    if nearest_dist < 0.1:
+                        # Nearest waypoint is virtually at the robot; skip it to avoid
+                        # a near-zero-length duplicate segment.
+                        path_points = [(current_x, current_y)] + list(path_points[nearest_idx + 1:])
+                    else:
+                        path_points = [(current_x, current_y)] + list(path_points[nearest_idx:])
                 else:
                     # Robot is at or past the final waypoint.
                     # Reconnect current position directly to the goal endpoint.
                     # CRITICAL FIX 2 below will still enforce the exact goal coordinates.
                     goal_pt = path_points[-1]
-                    dist_to_goal = math.hypot(current_x - goal_pt[0], current_y - goal_pt[1])
-                    if dist_to_goal < self.goal_completion_distance:
-                        # Already within goal tolerance – publish a minimal path so the
-                        # controller can recognise goal completion normally.
-                        path_points = [(current_x, current_y), goal_pt]
-                    else:
-                        path_points = [(current_x, current_y), goal_pt]
+                    path_points = [(current_x, current_y), goal_pt]
 
                 if self.debug_mode:
                     self.get_logger().warn(
