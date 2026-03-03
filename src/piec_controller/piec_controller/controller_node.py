@@ -311,7 +311,7 @@ class ControllerNode(Node):
             'close_range_distance': 0.5,  # Distance threshold for close-range proportional control (meters) - INCREASED from 0.3 to allow smoother approach
             
             # Path validation parameters
-            'path_staleness_threshold': 0.5,  # Maximum allowed deviation between path start and robot position (meters)
+            'path_staleness_threshold': 1.0,  # Maximum allowed deviation between path start and robot position (meters)
             'path_staleness_warning_threshold': 0.2,  # Warning threshold for path start deviation (meters)
             
             # Control mode

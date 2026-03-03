@@ -2386,8 +2386,9 @@ class CompletePathOptimizer(Node):
             if math.hypot(last_x - goal_x, last_y - goal_y) > 0.1:
                 path_points[-1] = (goal_x, goal_y)
 
-        # Interpolate to 30 evenly-spaced waypoints for smooth controller tracking
-        path_points = self.smooth_path_for_controller(path_points, num_points=30)
+        # NOTE: Do NOT re-interpolate here - the optimized waypoints already represent
+        # the curved path from NSGA-II. Linear re-interpolation would destroy the curves
+        # by creating straight-line segments between waypoints.
 
         path = Path()
         path.header.frame_id = 'odom'
