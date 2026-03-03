@@ -1448,11 +1448,26 @@ class CompletePathOptimizer(Node):
                     seed_path=curved_path_seed
                 )
             
-            if best_path is not None:
-                self.publish_path(best_path)
-            else:
-                fallback = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
-                self.publish_path(fallback)
+            if best_path is None or len(best_path) < 2:
+                best_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
+
+            # Validate path start and end positions before publishing
+            deviation_start = math.hypot(best_path[0][0] - start_x, best_path[0][1] - start_y)
+            deviation_end = math.hypot(best_path[-1][0] - goal_x, best_path[-1][1] - goal_y)
+
+            if deviation_start > 0.1:
+                self.get_logger().error(
+                    f"❌ Path start error: {deviation_start:.3f}m. Forcing correction."
+                )
+                best_path[0] = (start_x, start_y)
+
+            if deviation_end > 0.1:
+                self.get_logger().warn(
+                    f"⚠️ Path end error: {deviation_end:.3f}m. Forcing correction."
+                )
+                best_path[-1] = (goal_x, goal_y)
+
+            self.publish_path(best_path)
             
             elapsed = time.time() - start_time
             
@@ -1504,8 +1519,10 @@ class CompletePathOptimizer(Node):
         if seed_path is not None:
             if self.debug_mode:
                 self.get_logger().info("🌱 Seeding population with curved path")
-            # Ensure seed path starts at exact robot position
-            seed_path_corrected = [(start_x, start_y)] + [(p[0], p[1]) for p in seed_path[1:]]
+            # Ensure seed path starts at exact robot position and ends at exact goal
+            seed_path_corrected = (
+                [(start_x, start_y)] + list(seed_path[1:-1]) + [(goal_x, goal_y)]
+            )
             population[0] = seed_path_corrected
         
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)

@@ -20,7 +20,7 @@ ros__parameters:
   
   # Path Generation
   goal_topic: '/goal_pose'
-  waypoint_count: 10
+  waypoint_count: 12
   max_curvature: 1.5
   path_smoothing: true
   adaptive_sampling: true
