@@ -191,8 +191,8 @@ class CompletePathOptimizer(Node):
             'goal_topic': '/goal_pose',
             'odom_topic': '/ukf/odom',
             'laser_topic': '/scan_fixed',
-            'population_size': 20,
-            'generations': 7,
+            'population_size': 14,
+            'generations': 4,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
             'optimization_timeout': 2.0,
@@ -230,7 +230,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 3,
+            'max_pinn_calls_per_generation': 2,
         }
         
         # Declare all parameters
@@ -1203,10 +1203,30 @@ class CompletePathOptimizer(Node):
         """Start optimization"""
         if self.optimization_active:
             return
-        
+
+        # Publish a quick current-pose path immediately so the controller always
+        # has a fresh path while the slower optimizer runs in the background.
+        # Use a curved Bezier path when the goal requires significant turning.
+        if self.robot_pose is not None and self.goal_pose is not None:
+            current_x = self.robot_pose.pose.pose.position.x
+            current_y = self.robot_pose.pose.pose.position.y
+            goal_x = self.goal_pose.pose.position.x
+            goal_y = self.goal_pose.pose.position.y
+            if self.requires_significant_turning(
+                    current_x, current_y, goal_x, goal_y,
+                    threshold_degrees=self.significant_turning_threshold_deg):
+                quick_path = self.generate_curved_path_for_turning(
+                    current_x, current_y, goal_x, goal_y
+                )
+            else:
+                quick_path = self.generate_quick_response_path(
+                    current_x, current_y, goal_x, goal_y
+                )
+            self.publish_path(quick_path)
+
         self.last_optimization_time = time.time()
         self.optimization_active = True
-        
+
         thread = threading.Thread(target=self.run_enhanced_optimization)
         thread.daemon = True
         thread.start()
@@ -1504,10 +1524,20 @@ class CompletePathOptimizer(Node):
                 )
                 best_path[-1] = (goal_x, goal_y)
 
-            self.publish_path(best_path)
-            
+            # Skip publishing when the optimization ran over its time budget.
+            # The quick path published at the start of trigger_optimization is
+            # already serving the controller, and publishing a stale-start path
+            # here would only cause path-start-mismatch warnings.
             elapsed = time.time() - start_time
-            
+            if elapsed > self.optimization_timeout:
+                self.get_logger().warn(
+                    f"⚠️ Optimization took {elapsed:.1f}s "
+                    f"(>{self.optimization_timeout:.1f}s timeout). "
+                    f"Skipping stale path publish; relying on quick path."
+                )
+            else:
+                self.publish_path(best_path)
+
             # Calculate PINN usage during this optimization - FIXED
             pinn_calls_this_optimization = self.objective_evaluator.pinn_usage - pinn_stats_before
             pinn_success_this_optimization = self.objective_evaluator.pinn_success - pinn_success_before
@@ -1926,8 +1956,14 @@ class CompletePathOptimizer(Node):
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
         is_clear_path = self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, min(distance, 3.0))
 
-        # Add more straight paths if clear
-        if is_clear_path:
+        # Add more straight paths only if clear AND no significant turn is needed.
+        # When a turn is required the curved seed (injected by the caller) should
+        # dominate the initial population; extra straight-line copies would
+        # dilute it and push the optimizer back toward straight solutions.
+        requires_turn = self.requires_significant_turning(
+            start_x, start_y, goal_x, goal_y,
+            threshold_degrees=self.significant_turning_threshold_deg)
+        if is_clear_path and not requires_turn:
             for i in range(min(3, pop_size - 1)):
                 population.append(straight_path)
 
@@ -2439,16 +2475,26 @@ class CompletePathOptimizer(Node):
 
         # Publish a quick-response path immediately so the controller has
         # something to follow while the optimizer runs in the background.
+        # Use a curved Bezier path when the goal requires significant turning
+        # so the controller gets a realistic curved path right away.
         if self.robot_pose is not None:
             current_x = self.robot_pose.pose.pose.position.x
             current_y = self.robot_pose.pose.pose.position.y
             goal_x = msg.pose.position.x
             goal_y = msg.pose.position.y
-            quick_path = self.generate_quick_response_path(
-                current_x, current_y, goal_x, goal_y
-            )
+            if self.requires_significant_turning(
+                    current_x, current_y, goal_x, goal_y,
+                    threshold_degrees=self.significant_turning_threshold_deg):
+                quick_path = self.generate_curved_path_for_turning(
+                    current_x, current_y, goal_x, goal_y
+                )
+                self.get_logger().info("⚡ Curved quick-response path published; launching optimization")
+            else:
+                quick_path = self.generate_quick_response_path(
+                    current_x, current_y, goal_x, goal_y
+                )
+                self.get_logger().info("⚡ Quick-response path published; launching optimization")
             self.publish_path(quick_path)
-            self.get_logger().info("⚡ Quick-response path published; launching optimization")
 
         # Reset stuck tracking
         self.stuck_positions.clear()

@@ -1606,8 +1606,8 @@ class ControllerNode(Node):
                 )
             self.is_rotating_in_place = False  # Not rotating in place
         elif abs(angle_diff) > rotate_threshold_rad and \
-                self.get_current_clearance() < self.rotate_free_space_threshold:
-            # Large angle error AND tight space - rotate in place before driving
+                not self.has_forward_clearance(self.rotate_free_space_threshold):
+            # Large angle error AND forward clearance is insufficient - rotate in place
             # Check rotation timeout to prevent infinite spinning
             current_time = time.monotonic()
             if self.rotation_start_time is None:
