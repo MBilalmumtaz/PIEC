@@ -87,7 +87,6 @@ class ObjectiveEvaluator:
         # Performance tracking
         self.performance_history = []
         self.max_history = 100
-        self.pinn_usage_count = 0
         self.fallback_count = 0
     
     def check_pinn_service(self):

@@ -282,36 +282,40 @@ class PINNService(Node):
         
         # 6: terrain roughness (from path curvature)
         features[6] = self.calculate_roughness(xs, ys)
-        
-        # CRITICAL FIX: Use actual path characteristics to estimate obstacle density
-        # This is a heuristic until path optimizer sends real obstacle data
-        
-        # Use path curvature as proxy for obstacles (winding paths often avoid obstacles)
+
+        # 7: obstacle density proxy from path curvature variation
+        # Sudden direction changes indicate obstacle avoidance manoeuvres
         roughness = features[6]
-        
-        # Check if path goes through areas that might have obstacles
-        # Based on your environment, customize these thresholds
-        avg_x = np.mean(xs)
-        avg_y = np.mean(ys)
-        
-        # Simple heuristic: areas near origin might have more obstacles
-        # Adjust based on your actual environment
-        distance_from_origin = math.sqrt(avg_x**2 + avg_y**2)
-        
-        if distance_from_origin < 3.0:  # Near origin (cluttered area)
-            # Higher obstacle density
-            features[7] = 0.5 + roughness * 0.3
-            features[8] = max(0.5, 1.5 - roughness * 1.0)
-        elif distance_from_origin < 6.0:  # Mid-range
-            features[7] = 0.2 + roughness * 0.2
-            features[8] = max(1.0, 2.0 - roughness * 0.5)
-        else:  # Far from origin (open area)
-            features[7] = roughness * 0.1
+        if n >= 3:
+            curvatures = []
+            for i in range(1, n - 1):
+                dx1 = xs[i] - xs[i - 1]
+                dy1 = ys[i] - ys[i - 1]
+                dx2 = xs[i + 1] - xs[i]
+                dy2 = ys[i + 1] - ys[i]
+                norm1 = math.sqrt(dx1 * dx1 + dy1 * dy1)
+                norm2 = math.sqrt(dx2 * dx2 + dy2 * dy2)
+                if norm1 > 1e-6 and norm2 > 1e-6:
+                    dot = dx1 * dx2 + dy1 * dy2
+                    cos_a = max(-1.0, min(1.0, dot / (norm1 * norm2)))
+                    curvatures.append(abs(math.acos(cos_a)))
+            if curvatures:
+                max_curv = max(curvatures)
+                curv_var = float(np.var(curvatures))
+                # High curvature variance → path winds around obstacles
+                features[7] = min(1.0, max_curv * 0.4 + curv_var * 0.6)
+                # Clearance proxy: tighter curves imply less clearance
+                features[8] = max(0.1, 3.0 - max_curv * 2.0 - roughness * 0.5)
+            else:
+                features[7] = 0.0
+                features[8] = 3.0
+        else:
+            features[7] = 0.0
             features[8] = 3.0
-        
+
         # 9: terrain type (default)
         features[9] = 0.0
-        
+
         return features
     
     def calculate_roughness(self, xs, ys):
@@ -348,11 +352,16 @@ class PINNService(Node):
             
             # Diagnostic logging
             if self.diagnostic_mode and self.request_count % 5 == 1:
-                self.get_logger().info(f"🔍 Feature values - "
-                                      f"obs_dens={features[7]:.3f}, "
-                                      f"clearance={features[8]:.3f}, "
-                                      f"roughness={features[6]:.3f}, "
-                                      f"vel={features[3]:.2f}")
+                self.get_logger().info(
+                    f"🔍 Features: "
+                    f"x={features[0]:.2f}, y={features[1]:.2f}, "
+                    f"yaw={features[2]:.2f}, vel={features[3]:.2f}, "
+                    f"omega={features[4]:.3f}, slope={features[5]:.3f}, "
+                    f"rough={features[6]:.3f}, "
+                    f"obs_dens={features[7]:.3f}, "
+                    f"clearance={features[8]:.3f}, "
+                    f"terrain={features[9]:.1f}"
+                )
             
             # Apply input scaling if available
             if self.scaler is not None and isinstance(self.scaler, dict):
@@ -366,43 +375,57 @@ class PINNService(Node):
             # Convert to tensor
             input_tensor = torch.FloatTensor(features).unsqueeze(0).to(self.device)
             
-            # Run inference
+            # Run inference without physics constraints so we get raw normalized
+            # outputs and can inverse-scale them correctly before applying constraints
             with torch.no_grad():
-                output = self.model(input_tensor)
-            
+                if hasattr(self.model, 'forward') and \
+                        'apply_physics_constraints' in \
+                        self.model.forward.__code__.co_varnames:
+                    output = self.model(input_tensor,
+                                        apply_physics_constraints=False)
+                else:
+                    output = self.model(input_tensor)
+
             # Get raw predictions
             if isinstance(output, torch.Tensor):
                 output = output.cpu().numpy().flatten()
-                
+
                 if len(output) >= 2:
-                    # Raw network output (may be normalized)
+                    # Raw normalized network output
                     energy_norm = float(output[0])
                     stability_norm = float(output[1])
-                    
-                    # Apply inverse scaling for energy
+
                     if self.scaler is not None and isinstance(self.scaler, dict):
                         if 'Y_mean' in self.scaler and 'Y_std' in self.scaler:
-                            Y_mean = np.array(self.scaler['Y_mean'], dtype=np.float32)
-                            Y_std = np.array(self.scaler['Y_std'], dtype=np.float32)
-                            
-                            # Inverse transform
+                            Y_mean = np.array(self.scaler['Y_mean'],
+                                              dtype=np.float32)
+                            Y_std = np.array(self.scaler['Y_std'],
+                                             dtype=np.float32)
+
+                            # Inverse-scale both outputs first
                             energy = energy_norm * Y_std[0] + Y_mean[0]
-                            stability = stability_norm * Y_std[1] + Y_mean[1]
-                            
-                            # Ensure stability is in valid range
-                            stability = max(0.1, min(1.0, stability))
-                            
-                            if self.diagnostic_mode and self.request_count % 5 == 1:
+                            stability_raw = \
+                                stability_norm * Y_std[1] + Y_mean[1]
+
+                            # Then apply physics constraints on the real-scale
+                            # values: energy >= 0, stability in [0.1, 1.0]
+                            energy = max(0.0, energy)
+                            stability = max(0.1, min(1.0, stability_raw))
+
+                            if self.diagnostic_mode and \
+                                    self.request_count % 5 == 1:
                                 self.get_logger().info(
-                                    f"  Raw: {energy_norm:.3f}, {stability_norm:.3f} | "
-                                    f"Scaled: {energy:.3f}, {stability:.3f}"
+                                    f"  Raw: {energy_norm:.3f},"
+                                    f" {stability_norm:.3f} | "
+                                    f"Scaled: {energy:.3f},"
+                                    f" {stability:.3f}"
                                 )
                         else:
-                            energy = energy_norm
-                            stability = stability_norm
+                            energy = max(0.0, energy_norm)
+                            stability = max(0.1, min(1.0, stability_norm))
                     else:
-                        energy = energy_norm
-                        stability = stability_norm
+                        energy = max(0.0, energy_norm)
+                        stability = max(0.1, min(1.0, stability_norm))
                     
                     # Apply energy scaling
                     energy = energy * self.energy_scale
@@ -472,13 +495,12 @@ class PINNService(Node):
         
         # FIXED: Better stability calculation
         base_stability = 0.9  # Higher base for clear paths
-        
+
         # Penalties
         curvature_penalty = 0.4 * min(avg_curvature, 1.0)
         speed_penalty = 0.1 * min(avg_velocity, 2.0)
-        obstacle_penalty = 0.3  # Will be replaced by actual obstacle data
-        
-        stability = base_stability - curvature_penalty - speed_penalty - obstacle_penalty
+
+        stability = base_stability - curvature_penalty - speed_penalty
         stability = max(0.1, min(1.0, stability))
         
         # Add some randomness for challenging paths
