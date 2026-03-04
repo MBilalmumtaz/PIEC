@@ -38,7 +38,7 @@ class DynamicDWAComplete:
         self.w_goal = 1.5
         self.w_speed = 0.7
         self.w_clearance = 3.0  # Increased
-        self.w_path = 2.0
+        self.w_path = 4.0  # Increased from 2.0 for stronger path alignment
         self.w_free_space = 0.8  # NEW: Free space preference
         
         # Robot parameters
