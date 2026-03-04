@@ -191,8 +191,8 @@ class CompletePathOptimizer(Node):
             'goal_topic': '/goal_pose',
             'odom_topic': '/ukf/odom',
             'laser_topic': '/scan_fixed',
-            'population_size': 14,
-            'generations': 4,
+            'population_size': 10,
+            'generations': 3,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
             'optimization_timeout': 2.0,
@@ -230,7 +230,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 2,
+            'max_pinn_calls_per_generation': 1,
         }
         
         # Declare all parameters

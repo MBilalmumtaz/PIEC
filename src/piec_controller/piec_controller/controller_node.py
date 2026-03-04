@@ -163,6 +163,11 @@ class ControllerNode(Node):
         self.recovery_stage = 0
         self.goal_received_time = None  # Track when goal was received
 
+        # Reactive speed scaling state (zone hysteresis and approach velocity)
+        self._reactive_prev_obstacle_dist = float('inf')
+        self._reactive_in_risk_zone = False
+        self._reactive_in_safety_zone = False
+
         # Motor health monitoring
         self.commanded_velocity_history = deque(maxlen=20)
         self.actual_velocity_history = deque(maxlen=20)
@@ -332,6 +337,13 @@ class ControllerNode(Node):
             'use_pinn_in_controller': False,
             'scan_topic': '/scan_fixed',
             'path_topic': '/piec/path',
+
+            # Reactive speed scaling parameters
+            'reactive_risk_zone_dist': 0.3,     # m - stop linear velocity in this zone
+            'reactive_safety_zone_dist': 1.0,   # m - scale linearly in this zone
+            'reactive_hysteresis_factor': 0.15, # fraction - exit threshold = dist * (1 + factor)
+            'reactive_approach_gain': 2.0,      # gain applied to closing velocity for extra slowdown
+            'reactive_approach_threshold': -0.1, # m/s - closing speed below which approach_factor is applied
         }
 
         # Load from YAML if file exists
@@ -410,6 +422,13 @@ class ControllerNode(Node):
         self.prefer_free_space_turns = self.get_parameter('prefer_free_space_turns').value
         self.scan_topic = self.get_parameter('scan_topic').value
         self.path_topic = self.get_parameter('path_topic').value
+
+        # Reactive speed scaling parameters
+        self.reactive_risk_zone_dist = float(self.get_parameter('reactive_risk_zone_dist').value)
+        self.reactive_safety_zone_dist = float(self.get_parameter('reactive_safety_zone_dist').value)
+        self.reactive_hysteresis_factor = float(self.get_parameter('reactive_hysteresis_factor').value)
+        self.reactive_approach_gain = float(self.get_parameter('reactive_approach_gain').value)
+        self.reactive_approach_threshold = float(self.get_parameter('reactive_approach_threshold').value)
 
     def update_free_space_directions(self):
         """Update available free space directions"""
@@ -1420,7 +1439,10 @@ class ControllerNode(Node):
                     # Apply PINN optimization if available
                     if self.pinn_client is not None:
                         v, w = self.optimize_speed_with_pinn(v, w, distance_to_goal)
-                    
+
+                    # Reactive speed scaling: zone-based v scaling, w preserved
+                    v, w = self.apply_reactive_speed_scaling(v, w)
+
                     self.update_statistics(v)
                     self.publish_cmd(float(v), float(w))
                     
@@ -1520,6 +1542,9 @@ class ControllerNode(Node):
                                 f"⚠️ Blocking backward motion (v={v:.3f}) - forward clear ({forward_clearance:.2f}m)"
                             )
                         v = 0.2  # Force slow forward motion instead
+
+            # Reactive speed scaling: zone-based v scaling, w preserved
+            v, w = self.apply_reactive_speed_scaling(v, w)
 
             self.update_statistics(v)
             self.publish_cmd(float(v), float(w))
@@ -1949,6 +1974,86 @@ class ControllerNode(Node):
 
         if len(self.speed_history) > 0:
             self.avg_speed = sum(self.speed_history) / len(self.speed_history)
+
+    def apply_reactive_speed_scaling(self, v, w):
+        """Scale linear speed reactively based on obstacle proximity zones.
+
+        Zones (configurable via parameters):
+          - Risk zone   (< reactive_risk_zone_dist):  v=0, keep w to allow turning away.
+          - Safety zone (risk_dist to safety_dist):   linearly scale v 0→1.
+          - Far zone    (> reactive_safety_zone_dist): no scaling.
+
+        Hysteresis prevents stop/start oscillation at zone boundaries.
+        Closing-velocity awareness increases slowdown when obstacle is approaching.
+        Angular velocity is preserved in all zones so the robot can turn away.
+        """
+        if not self.scan_ranges:
+            return v, w
+
+        dist = self.obstacle_distance
+
+        # Track approach velocity (positive = obstacle moving away, negative = closing)
+        closing_vel = 0.0
+        if (self._reactive_prev_obstacle_dist != float('inf')
+                and dist != float('inf')):
+            dt = 1.0 / max(self.control_frequency, 1.0)
+            closing_vel = (dist - self._reactive_prev_obstacle_dist) / dt
+        self._reactive_prev_obstacle_dist = dist
+
+        if dist == float('inf'):
+            self._reactive_in_risk_zone = False
+            self._reactive_in_safety_zone = False
+            return v, w
+
+        risk_dist = self.reactive_risk_zone_dist
+        safety_dist = self.reactive_safety_zone_dist
+        hyst = self.reactive_hysteresis_factor
+
+        # Update risk zone state with hysteresis
+        if self._reactive_in_risk_zone:
+            if dist > risk_dist * (1.0 + hyst):
+                self._reactive_in_risk_zone = False
+        else:
+            if dist < risk_dist:
+                self._reactive_in_risk_zone = True
+
+        # Update safety zone state with hysteresis
+        if self._reactive_in_safety_zone:
+            if dist > safety_dist * (1.0 + hyst):
+                self._reactive_in_safety_zone = False
+        else:
+            if dist < safety_dist:
+                self._reactive_in_safety_zone = True
+
+        # Approach velocity factor: increase slowdown when obstacle closes quickly
+        approach_factor = 1.0
+        if closing_vel < self.reactive_approach_threshold:
+            approach_factor = max(0.3, 1.0 + closing_vel * self.reactive_approach_gain)
+
+        if self._reactive_in_risk_zone:
+            # Risk zone: stop forward motion; allow backward escape and keep w
+            scaled_v = 0.0 if v > 0.0 else v
+            if self.debug_mode and self.control_counter % 40 == 0:
+                self.get_logger().info(
+                    f"🛑 REACTIVE RISK ZONE ({dist:.2f}m): v→0, w={w:.3f} preserved"
+                )
+            return scaled_v, w
+
+        if self._reactive_in_safety_zone:
+            # Safety zone: linearly scale v from 0 (at risk boundary) to 1 (at safety boundary)
+            t = (dist - risk_dist) / max(safety_dist - risk_dist, 0.01)
+            t = max(0.0, min(1.0, t))
+            scale = max(0.0, min(1.0, t * approach_factor))
+            scaled_v = v * scale
+            if self.debug_mode and self.control_counter % 40 == 0:
+                self.get_logger().info(
+                    f"⚠️ REACTIVE SAFETY ZONE ({dist:.2f}m): scale={scale:.2f}, "
+                    f"v={v:.3f}→{scaled_v:.3f}, w={w:.3f}"
+                )
+            return scaled_v, w
+
+        # Far zone: no scaling
+        return v, w
 
     def publish_cmd(self, linear_vel, angular_vel):
         """Fixed publish command with calibration and motor health tracking"""
