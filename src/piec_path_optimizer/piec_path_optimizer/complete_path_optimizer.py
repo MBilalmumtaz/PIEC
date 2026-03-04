@@ -58,8 +58,14 @@ PATH_REPLAN_NEAREST_WAYPOINT_DIST = 0.5  # metres
 MIN_TURN_CURVATURE_THRESHOLD = 0.3  # minimum curvature for a valid turning path
 STRAIGHT_PATH_PENALTY_MULTIPLIER = 20.0  # penalty scale for straight paths during turns
 TURN_ANGLE_CURVATURE_SCALE = 200.0  # degrees-to-curvature scaling factor
-SEED_PRESERVATION_RATIO = 0.5  # fraction of generations to preserve curved seed
+SEED_PRESERVATION_RATIO = 1.0  # fraction of generations to preserve curved seed
 CURVE_PRESERVATION_FACTOR = 0.5  # scale factor for second waypoint during start correction
+# Number of initial population slots (after index 0) to replace with the
+# curved seed when a turn is required, preventing straight-path dominance.
+MAX_CURVED_SEED_REPLACEMENTS = 3
+# Reference turn angle (degrees) used to scale the straight-path penalty;
+# a 30° turn yields a scale factor of 1, larger turns scale proportionally.
+ANGLE_SCALE_DIVISOR_DEG = 30.0
 
 # Bezier curve generation constants
 BEZIER_CONTROL_POINT_RATIO = 1.0 / 3.0  # control-point offset as a fraction of total distance
@@ -185,8 +191,8 @@ class CompletePathOptimizer(Node):
             'goal_topic': '/goal_pose',
             'odom_topic': '/ukf/odom',
             'laser_topic': '/scan_fixed',
-            'population_size': 40,
-            'generations': 12,
+            'population_size': 20,
+            'generations': 7,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
             'optimization_timeout': 2.0,
@@ -224,7 +230,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 6,
+            'max_pinn_calls_per_generation': 3,
         }
         
         # Declare all parameters
@@ -1560,6 +1566,26 @@ class CompletePathOptimizer(Node):
             )
             population[0] = seed_path_corrected
 
+            # Replace any additional straight-path duplicates in the initial
+            # population with the curved seed so turns are not dominated by
+            # straight-line individuals from the start.
+            for i in range(1, min(MAX_CURVED_SEED_REPLACEMENTS + 1, len(population))):
+                arr = np.array([[p[0], p[1]] for p in population[i]])
+                if self.calculate_curvature(arr) < MIN_TURN_CURVATURE_THRESHOLD:
+                    population[i] = seed_path_corrected
+
+        # Pre-compute required turn angle for adaptive penalty scaling
+        required_angle_deg = 0.0
+        if requires_turn and self.robot_pose is not None:
+            robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+            goal_angle = math.atan2(goal_y - start_y, goal_x - start_x)
+            required_angle_deg = math.degrees(
+                abs(math.atan2(
+                    math.sin(goal_angle - robot_yaw),
+                    math.cos(goal_angle - robot_yaw)
+                ))
+            )
+
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
         
         # Track PINN usage across all generations
@@ -1575,6 +1601,14 @@ class CompletePathOptimizer(Node):
             valid_individuals = []
             
             for idx, individual in enumerate(population):
+                # Hard per-individual timeout: break early if the overall budget is exceeded
+                if time.time() - self.last_optimization_time > self.optimization_timeout:
+                    if self.debug_mode:
+                        self.get_logger().debug(
+                            f"⏱️ Per-individual timeout at gen {gen}, individual {idx}"
+                        )
+                    break
+
                 path_array = np.array([[p[0], p[1]] for p in individual])
                 
                 obstacle_cost = self.get_enhanced_obstacle_cost(path_array)
@@ -1635,12 +1669,16 @@ class CompletePathOptimizer(Node):
                             self.get_logger().debug(f"PINN failed for path {idx}")
                 
                 # NEW: Penalize straight paths when a turn is required (Strategy 1)
+                # Scale the penalty with the required turn angle so large turns
+                # produce a stronger penalty against straight-line solutions.
                 if requires_turn:
                     path_curvature = self.calculate_curvature(path_array)
                     if path_curvature < MIN_TURN_CURVATURE_THRESHOLD:
+                        angle_scale = max(1.0, required_angle_deg / ANGLE_SCALE_DIVISOR_DEG)
                         straight_penalty = (
                             (MIN_TURN_CURVATURE_THRESHOLD - path_curvature)
                             * STRAIGHT_PATH_PENALTY_MULTIPLIER
+                            * angle_scale
                         )
                         objectives = list(objectives)
                         objectives[1] += straight_penalty
@@ -2395,10 +2433,23 @@ class CompletePathOptimizer(Node):
         self.goal_received_time = time.time()  # ADD THIS - track when goal was received
         # Clear last path position to force path regeneration on new goals
         self.last_path_position = None
-        
+
         if self.debug_mode:
             self.get_logger().info(f"🎯 New goal: ({self.goal_position[0]:.2f}, {self.goal_position[1]:.2f})")
-        
+
+        # Publish a quick-response path immediately so the controller has
+        # something to follow while the optimizer runs in the background.
+        if self.robot_pose is not None:
+            current_x = self.robot_pose.pose.pose.position.x
+            current_y = self.robot_pose.pose.pose.position.y
+            goal_x = msg.pose.position.x
+            goal_y = msg.pose.position.y
+            quick_path = self.generate_quick_response_path(
+                current_x, current_y, goal_x, goal_y
+            )
+            self.publish_path(quick_path)
+            self.get_logger().info("⚡ Quick-response path published; launching optimization")
+
         # Reset stuck tracking
         self.stuck_positions.clear()
         self.stuck_count = 0
@@ -2408,7 +2459,7 @@ class CompletePathOptimizer(Node):
         self.escape_attempts.clear()
         self.progress_toward_goal.clear()
         self.position_history.clear()
-        
+
         # Trigger optimization
         self.trigger_optimization()
     
