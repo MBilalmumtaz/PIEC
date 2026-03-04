@@ -386,33 +386,56 @@ class CompletePathOptimizer(Node):
         try:
             # Prepare request
             request = PINN_SERVICE_TYPE.Request()
-            
+
             # Convert path to arrays
             xs = []
             ys = []
             yaws = []
             velocities = []
-            
+
+            # Pre-compute per-segment curvature to set velocity
+            n = len(path_array)
+            seg_curvatures = [0.0] * n
+            for i in range(1, n - 1):
+                x0, y0 = path_array[i - 1]
+                x1, y1 = path_array[i]
+                x2, y2 = path_array[i + 1]
+                dx1, dy1 = x1 - x0, y1 - y0
+                dx2, dy2 = x2 - x1, y2 - y1
+                n1 = math.hypot(dx1, dy1)
+                n2 = math.hypot(dx2, dy2)
+                if n1 > 1e-6 and n2 > 1e-6:
+                    cos_a = max(-1.0, min(
+                        1.0, (dx1 * dx2 + dy1 * dy2) / (n1 * n2)))
+                    seg_curvatures[i] = abs(math.acos(cos_a))
+
             # Use ALL points for better accuracy
-            for i in range(len(path_array)):
+            for i in range(n):
                 x, y = path_array[i]
                 xs.append(float(x))
                 ys.append(float(y))
-                
-                # Calculate yaw
-                if i < len(path_array) - 1:
+
+                # Calculate yaw: last waypoint uses previous segment direction
+                if i < n - 1:
                     next_x, next_y = path_array[i + 1]
                     yaw = math.atan2(next_y - y, next_x - x)
+                elif i > 0:
+                    prev_x, prev_y = path_array[i - 1]
+                    yaw = math.atan2(y - prev_y, x - prev_x)
                 else:
                     yaw = 0.0
                 yaws.append(float(yaw))
-                velocities.append(0.5)
-            
+
+                # Velocity: slow down proportionally to local curvature
+                curv = seg_curvatures[i]
+                vel = max(0.2, 0.5 * (1.0 - min(curv / math.pi, 1.0)))
+                velocities.append(float(vel))
+
             request.xs = xs
             request.ys = ys
             request.yaws = yaws
             request.velocities = velocities
-            
+
             # DEBUG: Log request details
             if self.debug_mode:
                 self.get_logger().debug(f"PINN call #{call_id}: {len(xs)} points")
