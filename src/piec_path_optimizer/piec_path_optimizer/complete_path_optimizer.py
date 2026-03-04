@@ -191,8 +191,8 @@ class CompletePathOptimizer(Node):
             'goal_topic': '/goal_pose',
             'odom_topic': '/ukf/odom',
             'laser_topic': '/scan_fixed',
-            'population_size': 10,
-            'generations': 3,
+            'population_size': 6,
+            'generations': 2,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
             'optimization_timeout': 2.0,
@@ -201,6 +201,7 @@ class CompletePathOptimizer(Node):
             'max_curvature': 2.5,
             'path_smoothing': True,
             'use_pinn_predictions': True,
+            'disable_pinn_in_optimizer': False,
             'pinn_service_name': '/evaluate_trajectory',
             'pinn_timeout': 1.5,
             'pinn_timeout': 2.0,  # Initial connection timeout
@@ -230,7 +231,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 1,
+            'max_pinn_calls_per_generation': 0,
         }
         
         # Declare all parameters
@@ -278,7 +279,14 @@ class CompletePathOptimizer(Node):
         self.escape_backup_distance = self.get_parameter('escape_backup_distance').value
         self.escape_lateral_distance = self.get_parameter('escape_lateral_distance').value
         self.max_pinn_calls_per_generation = self.get_parameter('max_pinn_calls_per_generation').value
-    
+
+        # Auto-disable PINN in optimizer when explicitly requested
+        if self.get_parameter('disable_pinn_in_optimizer').value:
+            self.max_pinn_calls_per_generation = 0
+            self.get_logger().info(
+                "🚫 PINN disabled in optimizer (disable_pinn_in_optimizer=True)"
+            )
+
     def initialize_obstacle_grid(self):
         """Initialize obstacle and free space grids"""
         size = self.obstacle_grid_size
@@ -325,6 +333,11 @@ class CompletePathOptimizer(Node):
                 self.get_logger().info("✅ PINN service is available!")
             else:
                 self.get_logger().warn(f"❌ PINN service not available after {self.pinn_timeout}s")
+                self.get_logger().info(
+                    "🚫 PINN disabled in optimizer (service unavailable; "
+                    "set use_pinn_predictions=True and start the service to re-enable)"
+                )
+                self.max_pinn_calls_per_generation = 0
                 self.pinn_client = None
                 self.pinn_service_available = False
                 self.pinn_ready_event.set()
@@ -1535,6 +1548,23 @@ class CompletePathOptimizer(Node):
                     f"(>{self.optimization_timeout:.1f}s timeout). "
                     f"Skipping stale path publish; relying on quick path."
                 )
+            elif self.robot_pose is not None:
+                # Also skip if robot moved far from optimization start: the
+                # controller already has a fresh quick path from trigger_optimization
+                # and the optimized path waypoints would be off by the robot's
+                # displacement.  publish_path handles minor corrections, but for
+                # large displacements it is cleaner to avoid re-publishing here.
+                current_rx = self.robot_pose.pose.pose.position.x
+                current_ry = self.robot_pose.pose.pose.position.y
+                robot_displacement = math.hypot(current_rx - start_x, current_ry - start_y)
+                if robot_displacement > PATH_REPLAN_NEAREST_WAYPOINT_DIST:
+                    self.get_logger().warn(
+                        f"⚠️ Robot moved {robot_displacement:.2f}m during optimization "
+                        f"(>{PATH_REPLAN_NEAREST_WAYPOINT_DIST}m). "
+                        f"Skipping stale optimized path; relying on quick path."
+                    )
+                else:
+                    self.publish_path(best_path)
             else:
                 self.publish_path(best_path)
 

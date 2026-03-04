@@ -2071,6 +2071,19 @@ class ControllerNode(Node):
         angular_vel_scaled = raw_angular * self.angular_scale
         angular_vel = angular_vel_scaled * self.angular_sign
         
+        # Motor cooldown: gradually reduce linear velocity when motors are
+        # consistently unresponsive to avoid repeatedly overwhelming them.
+        # Angular velocity is preserved so the robot can still turn away.
+        if (hasattr(self, 'motor_unresponsive_count') and self.motor_unresponsive_count >= 5
+                and abs(linear_vel) > 0.03):
+            cooldown_factor = max(0.2, 1.0 - (self.motor_unresponsive_count - 5) * 0.15)
+            linear_vel = linear_vel * cooldown_factor
+            if self.debug_mode and self.control_counter % 50 == 0:
+                self.get_logger().warn(
+                    f"⚠️ Motor cooldown active (unresponsive_count={self.motor_unresponsive_count}): "
+                    f"v scaled to {linear_vel:.3f} m/s"
+                )
+
         # Clamp to limits
         linear_vel = np.clip(linear_vel, -self.max_linear_vel, self.max_linear_vel)
         angular_vel = np.clip(angular_vel, -self.max_angular_vel, self.max_angular_vel)
