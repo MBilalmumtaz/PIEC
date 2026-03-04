@@ -309,6 +309,7 @@ class ControllerNode(Node):
             'rotation_direction_lock_duration': 2.0,  # Time (seconds) to lock rotation direction to prevent oscillation
             'rotation_min_angle_for_lock_deg': 10.0,  # Minimum angle error (degrees) to maintain locked direction
             'close_range_distance': 0.5,  # Distance threshold for close-range proportional control (meters) - INCREASED from 0.3 to allow smoother approach
+            'rotate_free_space_threshold': 1.5,  # Min clearance (m) to use combined forward+turn instead of rotate-in-place
             
             # Path validation parameters
             'path_staleness_threshold': 0.5,  # Maximum allowed deviation between path start and robot position (meters)
@@ -387,6 +388,7 @@ class ControllerNode(Node):
         self.rotation_direction_lock_duration = float(self.get_parameter('rotation_direction_lock_duration').value)
         self.rotation_min_angle_for_lock_deg = float(self.get_parameter('rotation_min_angle_for_lock_deg').value)
         self.close_range_distance = float(self.get_parameter('close_range_distance').value)
+        self.rotate_free_space_threshold = float(self.get_parameter('rotate_free_space_threshold').value)
         
         # Path validation parameters
         self.path_staleness_threshold = float(self.get_parameter('path_staleness_threshold').value)
@@ -1603,8 +1605,9 @@ class ControllerNode(Node):
                     f"🎯 Close-range proportional: dist={distance:.2f}m, angle={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
             self.is_rotating_in_place = False  # Not rotating in place
-        elif abs(angle_diff) > rotate_threshold_rad:
-            # Large angle error - rotate in place before driving
+        elif abs(angle_diff) > rotate_threshold_rad and \
+                self.get_current_clearance() < self.rotate_free_space_threshold:
+            # Large angle error AND tight space - rotate in place before driving
             # Check rotation timeout to prevent infinite spinning
             current_time = time.monotonic()
             if self.rotation_start_time is None:
