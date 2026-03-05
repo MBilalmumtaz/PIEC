@@ -1601,6 +1601,15 @@ class CompletePathOptimizer(Node):
         Args:
             seed_path: Optional pre-generated path to seed the population (e.g., curved path for turns)
         """
+        # Wall-clock start for the hard per-run timeout.
+        # This is set slightly below the 2.0 s optimization_timeout so the loop
+        # can break and return the best solution found so far rather than having
+        # the result discarded as stale by the caller.
+        # NOTE: Must be set BEFORE population init so that initialization time is
+        # counted against the budget and the loop never overruns the caller's window.
+        HARD_TIMEOUT = 1.5  # seconds
+        optimization_start = time.time()
+
         population = self.initialize_enhanced_population(
             start_x, start_y, goal_x, goal_y, pop_size
         )
@@ -1640,17 +1649,10 @@ class CompletePathOptimizer(Node):
             )
 
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
-        
+
         # Track PINN usage across all generations
         total_pinn_calls = 0
         total_pinn_success = 0
-
-        # Wall-clock start for the hard per-run timeout.
-        # This is set slightly below the 2.0 s optimization_timeout so the loop
-        # can break and return the best solution found so far rather than having
-        # the result discarded as stale by the caller.
-        HARD_TIMEOUT = 1.5  # seconds
-        optimization_start = time.time()
 
         for gen in range(generations):
             # Hard wall-clock check: exit early rather than publishing a stale path
