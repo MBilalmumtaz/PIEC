@@ -191,8 +191,8 @@ class CompletePathOptimizer(Node):
             'goal_topic': '/goal_pose',
             'odom_topic': '/ukf/odom',
             'laser_topic': '/scan_fixed',
-            'population_size': 10,
-            'generations': 3,
+            'population_size': 6,
+            'generations': 2,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
             'optimization_timeout': 2.0,
@@ -230,7 +230,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 1,
+            'max_pinn_calls_per_generation': 0,
         }
         
         # Declare all parameters
@@ -1645,7 +1645,22 @@ class CompletePathOptimizer(Node):
         total_pinn_calls = 0
         total_pinn_success = 0
 
+        # Wall-clock start for the hard per-run timeout.
+        # This is set slightly below the 2.0 s optimization_timeout so the loop
+        # can break and return the best solution found so far rather than having
+        # the result discarded as stale by the caller.
+        HARD_TIMEOUT = 1.5  # seconds
+        optimization_start = time.time()
+
         for gen in range(generations):
+            # Hard wall-clock check: exit early rather than publishing a stale path
+            if time.time() - optimization_start > HARD_TIMEOUT:
+                if self.debug_mode:
+                    self.get_logger().debug(
+                        f"Early exit at generation {gen} (hard timeout {HARD_TIMEOUT}s)"
+                    )
+                break
+
             # Reset per-generation counters
             pinn_calls_this_generation = 0
             pinn_success_this_generation = 0
