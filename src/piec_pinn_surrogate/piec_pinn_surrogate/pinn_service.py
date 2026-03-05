@@ -116,11 +116,18 @@ class PINNService(Node):
             model_paths = []
             if self.model_path:
                 model_paths.append(self.model_path)
+            # Try ament_index-based path first (works in installed ROS2 workspace)
+            try:
+                from ament_index_python.packages import get_package_share_directory
+                pkg_share = get_package_share_directory('piec_pinn_surrogate')
+                model_paths.append(os.path.join(pkg_share, 'models', 'pinn_physics.pt'))
+            except Exception:
+                pass
             model_paths += [
-                '/home/amjad/PIEC_2d/src/piec_pinn_surrogate/models/pinn_physics.pt',
-                '/home/amjad/PIEC_2d/install/piec_pinn_surrogate/share/piec_pinn_surrogate/models/pinn_physics.pt',
                 os.path.join(os.path.dirname(__file__), '..', 'models', 'pinn_physics.pt'),
                 os.path.join(os.path.dirname(__file__), 'models', 'pinn_physics.pt'),
+                '/home/amjad/PIEC_2d/src/piec_pinn_surrogate/models/pinn_physics.pt',
+                '/home/amjad/PIEC_2d/install/piec_pinn_surrogate/share/piec_pinn_surrogate/models/pinn_physics.pt',
                 'pinn_physics.pt'
             ]
             
@@ -589,9 +596,17 @@ class PINNService(Node):
                     self.response_times.pop(0)
                 self.avg_response_time = np.mean(self.response_times)
             
-            # Log periodically
-            if req_num % 5 == 0 or self.debug_mode:
+            # Log every 5th request at INFO; every request at DEBUG when debug_mode is on
+            if req_num % 5 == 0:
                 self.get_logger().info(
+                    f"PINN Service: Request #{req_num}, "
+                    f"Energy={response.energy:.2f}J, Stability={response.stability:.3f}, "
+                    f"Type={inference_type}, "
+                    f"Time={response_time:.3f}s, "
+                    f"Avg={self.avg_response_time:.3f}s"
+                )
+            elif self.debug_mode:
+                self.get_logger().debug(
                     f"PINN Service: Request #{req_num}, "
                     f"Energy={response.energy:.2f}J, Stability={response.stability:.3f}, "
                     f"Type={inference_type}, "
