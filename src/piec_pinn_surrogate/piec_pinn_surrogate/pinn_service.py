@@ -244,12 +244,26 @@ class PINNService(Node):
         n = len(xs)
         if n < 2:
             return np.zeros(10, dtype=np.float32)
-        
+
         # Convert to numpy arrays
         xs = np.array(xs, dtype=np.float32)
         ys = np.array(ys, dtype=np.float32)
-        yaws = np.array(yaws, dtype=np.float32)
-        velocities = np.array(velocities, dtype=np.float32)
+        yaws = np.array(yaws, dtype=np.float32) if len(yaws) >= n else np.zeros(n, dtype=np.float32)
+        velocities = np.array(velocities, dtype=np.float32) if len(velocities) >= n else np.full(n, 0.5, dtype=np.float32)
+
+        # If only 2 points, interpolate to create more meaningful features
+        if n == 2:
+            seg_len = math.sqrt((xs[-1] - xs[0]) ** 2 + (ys[-1] - ys[0]) ** 2)
+            if seg_len < 1e-6:
+                return np.zeros(10, dtype=np.float32)
+            num_interp = max(5, int(seg_len / 0.3))
+            t = np.linspace(0.0, 1.0, num_interp, dtype=np.float32)
+            xs = xs[0] + t * (xs[-1] - xs[0])
+            ys = ys[0] + t * (ys[-1] - ys[0])
+            yaw_val = math.atan2(ys[-1] - ys[0], xs[-1] - xs[0])
+            yaws = np.full(num_interp, yaw_val, dtype=np.float32)
+            velocities = np.full(num_interp, np.mean(velocities), dtype=np.float32)
+            n = num_interp
         
         features = np.zeros(10, dtype=np.float32)
         
@@ -383,12 +397,11 @@ class PINNService(Node):
             # Run inference without physics constraints so we get raw normalized
             # outputs and can inverse-scale them correctly before applying constraints
             with torch.no_grad():
-                if hasattr(self.model, 'forward') and \
-                        'apply_physics_constraints' in \
-                        self.model.forward.__code__.co_varnames:
+                try:
                     output = self.model(input_tensor,
                                         apply_physics_constraints=False)
-                else:
+                except TypeError:
+                    # Fallback for models that don't accept this parameter
                     output = self.model(input_tensor)
 
             # Get raw predictions
