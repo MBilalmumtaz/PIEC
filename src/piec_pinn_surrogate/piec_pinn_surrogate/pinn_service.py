@@ -251,12 +251,14 @@ class PINNService(Node):
         yaws = np.array(yaws, dtype=np.float32) if len(yaws) >= n else np.zeros(n, dtype=np.float32)
         velocities = np.array(velocities, dtype=np.float32) if len(velocities) >= n else np.full(n, 0.5, dtype=np.float32)
 
-        # If only 2 points, interpolate to create more meaningful features
-        if n == 2:
+        # If only 2 points (or fewer valid points after filtering), interpolate
+        # intermediate waypoints so path-based features (roughness, detour_ratio,
+        # direction_changes) produce non-trivial values.
+        if n <= 2:
             seg_len = math.sqrt((xs[-1] - xs[0]) ** 2 + (ys[-1] - ys[0]) ** 2)
             if seg_len < 1e-6:
                 return np.zeros(10, dtype=np.float32)
-            num_interp = max(5, int(seg_len / 0.3))
+            num_interp = max(10, int(seg_len / 0.3))
             t = np.linspace(0.0, 1.0, num_interp, dtype=np.float32)
             xs = xs[0] + t * (xs[-1] - xs[0])
             ys = ys[0] + t * (ys[-1] - ys[0])
@@ -394,12 +396,14 @@ class PINNService(Node):
             # Convert to tensor
             input_tensor = torch.FloatTensor(features).unsqueeze(0).to(self.device)
             
-            # Run inference without physics constraints so we get raw normalized
-            # outputs and can inverse-scale them correctly before applying constraints
+            # Run inference WITH physics constraints to match how the model was
+            # trained (train_pinn.py uses apply_physics_constraints=True).
+            # Skipping constraints produces raw pre-sigmoid/pre-relu values that
+            # were never seen during training and cause badly scaled predictions.
             with torch.no_grad():
                 try:
                     output = self.model(input_tensor,
-                                        apply_physics_constraints=False)
+                                        apply_physics_constraints=True)
                 except TypeError:
                     # Fallback for models that don't accept this parameter
                     output = self.model(input_tensor)
@@ -553,6 +557,15 @@ class PINNService(Node):
                 response.energy = 0.0
                 response.stability = 1.0
                 return response
+
+            # Warn when only 2 points arrive: obstacle features will be zero
+            # and stability will appear artificially high (clear-path prediction).
+            # The path optimizer should send full waypoint paths.
+            if self.diagnostic_mode and len(xs) <= 2:
+                self.get_logger().warn(
+                    f"⚠️ Only {len(xs)} waypoints received - obstacle features "
+                    f"will be zero. Path optimizer should send full waypoint paths."
+                )
             
             # Try neural network prediction first
             energy, stability = self.predict_with_model(xs, ys, yaws, velocities)
