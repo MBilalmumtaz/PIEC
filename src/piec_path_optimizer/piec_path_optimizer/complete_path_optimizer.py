@@ -195,16 +195,15 @@ class CompletePathOptimizer(Node):
             'generations': 2,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
-            'optimization_timeout': 2.0,
+            'optimization_timeout': 3.0,
             'planning_rate': 1.0,
             'waypoint_count': 8,
             'max_curvature': 2.5,
             'path_smoothing': True,
             'use_pinn_predictions': True,
             'pinn_service_name': '/evaluate_trajectory',
-            'pinn_timeout': 1.5,
             'pinn_timeout': 2.0,  # Initial connection timeout
-            'pinn_call_timeout': 2.0,  # INCREASED from 0.5 to 5.0 seconds
+            'pinn_call_timeout': 2.0,
             'objective_weights': [0.12, 0.08, 0.35, 0.08, 0.12, 0.15, 0.1],
             'obstacle_penalty_weight': 6.0,
             'min_obstacle_distance': 0.4,
@@ -230,7 +229,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 0,
+            'max_pinn_calls_per_generation': 3,
         }
         
         # Declare all parameters
@@ -1610,12 +1609,12 @@ class CompletePathOptimizer(Node):
             seed_path: Optional pre-generated path to seed the population (e.g., curved path for turns)
         """
         # Wall-clock start for the hard per-run timeout.
-        # This is set slightly below the 2.0 s optimization_timeout so the loop
-        # can break and return the best solution found so far rather than having
+        # Set to optimization_timeout minus a small margin so the loop can
+        # break and return the best solution found so far rather than having
         # the result discarded as stale by the caller.
         # NOTE: Must be set BEFORE population init so that initialization time is
         # counted against the budget and the loop never overruns the caller's window.
-        HARD_TIMEOUT = 1.5  # seconds
+        HARD_TIMEOUT = max(1.0, self.optimization_timeout - 0.5)  # seconds
         optimization_start = time.time()
 
         population = self.initialize_enhanced_population(
@@ -2019,9 +2018,15 @@ class CompletePathOptimizer(Node):
         if free_space_path:
             population.append(free_space_path)
 
-        quick_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
-        if quick_path:
-            population.append(quick_path)
+        # Use generate_straight_path_with_waypoints instead of generate_quick_response_path
+        # so the population always has multi-waypoint paths. generate_quick_response_path
+        # returns only 2 points for short distances, which prevents PINN from extracting
+        # meaningful obstacle/roughness features from the path during optimization.
+        straight_candidate = self.generate_straight_path_with_waypoints(
+            start_x, start_y, goal_x, goal_y
+        )
+        if straight_candidate:
+            population.append(straight_candidate)
 
         # Fill the rest with variations, but reduce exploration for clear paths
         remaining = pop_size - len(population)
