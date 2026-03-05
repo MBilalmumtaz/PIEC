@@ -280,38 +280,43 @@ class PINNService(Node):
         else:
             features[5] = 0.0
         
-        # 6: terrain roughness (from path curvature)
-        features[6] = self.calculate_roughness(xs, ys)
-
-        # 7: obstacle density proxy from path curvature variation
-        # Sudden direction changes indicate obstacle avoidance manoeuvres
-        roughness = features[6]
-        if n >= 3:
-            curvatures = []
-            for i in range(1, n - 1):
-                dx1 = xs[i] - xs[i - 1]
-                dy1 = ys[i] - ys[i - 1]
-                dx2 = xs[i + 1] - xs[i]
-                dy2 = ys[i + 1] - ys[i]
-                norm1 = math.sqrt(dx1 * dx1 + dy1 * dy1)
-                norm2 = math.sqrt(dx2 * dx2 + dy2 * dy2)
-                if norm1 > 1e-6 and norm2 > 1e-6:
-                    dot = dx1 * dx2 + dy1 * dy2
-                    cos_a = max(-1.0, min(1.0, dot / (norm1 * norm2)))
-                    curvatures.append(abs(math.acos(cos_a)))
-            if curvatures:
-                max_curv = max(curvatures)
-                curv_var = float(np.var(curvatures))
-                # High curvature variance → path winds around obstacles
-                features[7] = min(1.0, max_curv * 0.4 + curv_var * 0.6)
-                # Clearance proxy: tighter curves imply less clearance
-                features[8] = max(0.1, 3.0 - max_curv * 2.0 - roughness * 0.5)
-            else:
-                features[7] = 0.0
-                features[8] = 3.0
+        # 6: terrain roughness – average curvature plus segment-length coefficient
+        # of variation (cv = std/mean).  Unequal segment lengths indicate irregular
+        # terrain even on nominally straight paths.
+        curvature = self.calculate_roughness(xs, ys)
+        segment_lengths = np.sqrt(np.diff(xs) ** 2 + np.diff(ys) ** 2)
+        if len(segment_lengths) > 1:
+            seg_cv = float(
+                np.std(segment_lengths) / (np.mean(segment_lengths) + 1e-6)
+            )
         else:
-            features[7] = 0.0
-            features[8] = 3.0
+            seg_cv = 0.0
+        features[6] = min(curvature + seg_cv * 0.5, 2.0)
+
+        # 7: obstacle density – detour ratio + curvature + direction-change frequency
+        # These three signals are non-zero even for straight paths with varying
+        # segment lengths or slight direction changes, preventing the "all zeros"
+        # failure mode seen when paths are perfectly straight.
+        straight_dist = math.sqrt(
+            (xs[-1] - xs[0]) ** 2 + (ys[-1] - ys[0]) ** 2
+        )
+        path_length = float(np.sum(segment_lengths))
+        detour_ratio = (path_length / max(straight_dist, 0.01)) - 1.0
+        # 0.1 rad (~5.7°) is the minimum yaw change treated as a meaningful
+        # direction change; smaller values are likely noise from path discretisation.
+        direction_changes = float(
+            np.sum(np.abs(np.diff(yaws)) > 0.1)
+        )
+        obs_density = min(
+            1.0,
+            detour_ratio * 0.5
+            + curvature * 0.3
+            + (direction_changes / max(n - 2, 1)) * 0.2,
+        )
+        features[7] = obs_density
+
+        # 8: clearance – inverse of obstacle density with a guaranteed minimum
+        features[8] = max(0.1, 3.0 * (1.0 - obs_density))
 
         # 9: terrain type (default)
         features[9] = 0.0
