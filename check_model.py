@@ -84,18 +84,20 @@ def test_model_variations(model, device, scaler=None):
         
         # Run inference
         with torch.no_grad():
-            output = model(input_tensor)
+            # Use apply_physics_constraints=True to match pinn_service.py.
+            # This applies ReLU to energy and sigmoid to stability inside the
+            # model, so the outputs are already constrained (energy ≥ 0,
+            # stability ∈ [0,1]).  Do NOT apply sigmoid again here.
+            output = model(input_tensor, apply_physics_constraints=True)
         
         # Handle output format
         if isinstance(output, tuple):
             energy = output[0][0, 0].item() if isinstance(output[0], torch.Tensor) else output[0]
-            raw_stability = output[1][0, 0].item() if isinstance(output[1], torch.Tensor) else output[1]
-            stability = 1.0 / (1.0 + np.exp(-raw_stability))  # Sigmoid
+            stability = output[1][0, 0].item() if isinstance(output[1], torch.Tensor) else output[1]
         elif isinstance(output, torch.Tensor):
             if output.shape[-1] >= 2:
                 energy = output[0, 0].item()
-                raw_stability = output[0, 1].item()
-                stability = 1.0 / (1.0 + np.exp(-raw_stability))  # Sigmoid
+                stability = output[0, 1].item()
             else:
                 energy = output[0, 0].item()
                 stability = 0.5
@@ -103,12 +105,23 @@ def test_model_variations(model, device, scaler=None):
             energy = float(output[0]) if hasattr(output, '__getitem__') else 0
             stability = 0.5
         
-        # Apply inverse scaling for energy if available
+        # Apply inverse scaling for both energy and stability
         if scaler is not None and isinstance(scaler, dict):
             if 'Y_mean' in scaler and 'Y_std' in scaler:
-                Y_mean = scaler['Y_mean'][0] if isinstance(scaler['Y_mean'], (list, np.ndarray)) else scaler['Y_mean']
-                Y_std = scaler['Y_std'][0] if isinstance(scaler['Y_std'], (list, np.ndarray)) else scaler['Y_std']
-                energy = energy * Y_std + Y_mean
+                Y_mean = scaler['Y_mean']
+                Y_std = scaler['Y_std']
+                if isinstance(Y_mean, (list, np.ndarray)) and isinstance(Y_std, (list, np.ndarray)):
+                    e_mean, e_std = float(Y_mean[0]), float(Y_std[0])
+                    s_mean, s_std = float(Y_mean[1]), float(Y_std[1])
+                else:
+                    # Scalar scaler — only energy can be rescaled; stability stays as-is
+                    e_mean, e_std = float(Y_mean), float(Y_std)
+                    s_mean, s_std = 0.0, 1.0
+                energy = energy * e_std + e_mean
+                stability = stability * s_std + s_mean
+                # Safety clamp
+                energy = max(0.0, energy)
+                stability = max(0.1, min(1.0, stability))
         
         all_outputs.append((energy, stability))
         
