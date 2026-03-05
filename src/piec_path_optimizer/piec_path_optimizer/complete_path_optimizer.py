@@ -439,7 +439,15 @@ class CompletePathOptimizer(Node):
             # DEBUG: Log request details
             if self.debug_mode:
                 self.get_logger().debug(f"PINN call #{call_id}: {len(xs)} points")
-            
+
+            # Warn when only 2 points are sent: obstacle features will be zero
+            # and stability will appear artificially high (clear-path prediction).
+            if len(path_array) <= 2 and self.debug_mode:
+                self.get_logger().warn(
+                    f"⚠️ PINN call #{call_id} with only {len(path_array)} points - "
+                    f"obstacle features will be zero"
+                )
+
             start_time = time.time()
             
             # Call service with timeout
