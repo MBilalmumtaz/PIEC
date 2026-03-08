@@ -3,11 +3,11 @@ import torch.nn as nn
 import numpy as np
 
 class PhysicsInformedPINN(nn.Module):
-    def __init__(self, input_dim=10, hidden_dim=128):
+    def __init__(self, input_dim=11, hidden_dim=128):
         """
-        Enhanced PINN model with 10 input features including laser scan data
+        Enhanced PINN model with 11 input features including laser scan data
         
-        Input features (10 dimensions):
+        Input features (11 dimensions):
         0: x position
         1: y position  
         2: yaw angle
@@ -74,41 +74,38 @@ class PhysicsInformedPINN(nn.Module):
     
     def physics_loss(self, x, y_pred, y_true=None):
         """
-        Enhanced physics-informed loss terms - ULTRA SCALED DOWN VERSION
+        Physics-informed loss terms (penalty only, no data term).
         """
         loss = 0.0
-        
+
         # Extract features (denormalized values)
         energy = y_pred[:, 0]
         stability = y_pred[:, 1]
-        
-        velocity = torch.abs(x[:, 3])          # Linear velocity
-        omega = torch.abs(x[:, 4])              # Angular velocity
-        slope = torch.abs(x[:, 5])               # Terrain slope
-        roughness = x[:, 6]                      # Terrain roughness
-        obstacle_density = x[:, 7]                # Obstacle density
-        clearance = x[:, 8]                       # Clearance
-        
-        # Robot physical parameters
-        mass = 50.0      # kg
-        g = 9.81         # m/s²
-        
-        # 1. Energy should increase with challenging terrain
-        # Physics-based expected energy (Joules) - EXTREME SCALING
-        kinetic = 0.5 * mass * velocity**2 / 10000.0  # Divided by 10000
+
+        velocity = torch.abs(x[:, 3])
+        omega = torch.abs(x[:, 4])
+        slope = torch.abs(x[:, 5])
+        roughness = x[:, 6]
+        obstacle_density = x[:, 7]
+        clearance = x[:, 8]
+
+        mass = 26.0      # kg – keep as in training; if you retrain with new data, update to 26.0
+        g = 9.81
+
+        # Energy components (scaled down as before)
+        kinetic = 0.5 * mass * velocity**2 / 10000.0
         turning = 0.1 * mass * omega * velocity / 10000.0
         slope_energy = mass * g * slope * 0.1 / 10000.0
         friction = 0.05 * mass * g * roughness * velocity / 10000.0
         obstacle_energy = 0.3 * mass * obstacle_density * velocity**2 / 10000.0
-        
+
         expected_energy = kinetic + turning + slope_energy + friction + obstacle_energy
-        
-        # Energy conservation loss - TINY WEIGHT
-        energy_diff = torch.abs(energy/10000.0 - expected_energy)
-        energy_loss = torch.mean(energy_diff) * 0.00001  # Even smaller!
+
+        energy_diff = torch.abs(energy / 10000.0 - expected_energy)
+        energy_loss = torch.mean(energy_diff) * 0.00001
         loss += energy_loss
-        
-        # 2. Stability should decrease with risk factors
+
+        # Stability penalty
         base_stability = 0.9
         speed_penalty = 0.2 * (velocity / 2.0)
         turn_penalty = 0.3 * (omega / 1.0)
@@ -116,27 +113,23 @@ class PhysicsInformedPINN(nn.Module):
         roughness_penalty = 0.2 * roughness
         obstacle_penalty = 0.5 * obstacle_density
         clearance_penalty = 0.2 * torch.relu(1.0 - clearance)
-        
+
         expected_stability = base_stability - (
-            speed_penalty + turn_penalty + slope_penalty + 
+            speed_penalty + turn_penalty + slope_penalty +
             roughness_penalty + obstacle_penalty + clearance_penalty
         )
         expected_stability = torch.clamp(expected_stability, 0.1, 1.0)
-        
-        # Stability loss - TINY WEIGHT
+
         stability_diff = torch.abs(stability - expected_stability)
         stability_loss = torch.mean(stability_diff) * 0.00001
         loss += stability_loss
-        
-        # 3. Non-negativity constraint - minimal
+
+        # Non‑negativity constraint
         non_neg_loss = torch.mean(torch.relu(-energy)) * 0.0001
         loss += non_neg_loss
-        
-        # Add data loss if ground truth provided - use full weight
-        if y_true is not None:
-            mse_loss = nn.MSELoss()(y_pred, y_true)
-            loss += mse_loss  # Full data loss - this is what matters!
-        
+
+        # ❌ REMOVED the mse_loss addition – data loss is handled separately in training
+
         return loss
     
     def predict_with_breakdown(self, x):
