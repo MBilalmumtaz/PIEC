@@ -9,6 +9,7 @@ import math
 import os
 import numpy as np
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, LaserScan
@@ -21,7 +22,18 @@ class EnhancedPINNDataRecorder(Node):
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_callback, 10)
         self.imu_sub = self.create_subscription(Imu, '/imu/data', self.imu_callback, 50)
-        self.scan_sub = self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        
+        # CRITICAL FIX: Match the publisher's QoS exactly
+        laser_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,  # Changed from BEST_EFFORT
+            durability=QoSDurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+        
+        self.scan_sub = self.create_subscription(
+            LaserScan, '/scan', self.scan_callback, laser_qos
+        )
         
         # Initialize variables
         self.filename = filename
@@ -33,7 +45,7 @@ class EnhancedPINNDataRecorder(Node):
         self.csv_writer.writerow([
             't', 'x', 'y', 'yaw', 'v_cmd', 'omega_cmd', 'imu_wz',
             'slope', 'roughness', 'obstacle_density', 'clearance',
-            'terrain_type', 'sim_energy', 'sim_stability'
+            'terrain_type', 'sim_energy', 'sim_stability','path_length'
         ])
         
         self.last_cmd = (0.0, 0.0)
@@ -41,6 +53,10 @@ class EnhancedPINNDataRecorder(Node):
         self.last_scan = None
         self.scan_angles = None
         self.record_counter = 0
+        
+        # For path length estimation
+        self.last_position = None
+        self.path_length_accumulator = 0.0
         
         self.get_logger().info(f'Enhanced PINN Recorder started -> {filename}')
         self.get_logger().info('Recording: pose, commands, IMU, laser scan features')
@@ -53,6 +69,20 @@ class EnhancedPINNDataRecorder(Node):
                 msg.angle_min + i * msg.angle_increment 
                 for i in range(len(msg.ranges))
             ]
+        
+        # DEBUG: Print min range in front sector
+        if self.record_counter % 50 == 0:
+            front_ranges = []
+            for i, angle in enumerate(self.scan_angles):
+                if abs(angle) < 0.785:  # ±45 degrees
+                    if 0.1 < msg.ranges[i] < 10.0:
+                        front_ranges.append(msg.ranges[i])
+            if front_ranges:
+                min_front = min(front_ranges)
+                avg_front = sum(front_ranges)/len(front_ranges)
+                self.get_logger().info(f"🔍 Front sector - min: {min_front:.2f}m, avg: {avg_front:.2f}m, count: {len(front_ranges)}")
+            else:
+                self.get_logger().info("🔍 Front sector - NO OBSTACLES DETECTED")
     
     def cmd_callback(self, msg):
         """Record command velocities"""
@@ -105,89 +135,143 @@ class EnhancedPINNDataRecorder(Node):
         
         return 0.0, 10.0, 0
     
-    def calculate_energy_stability(self, v_cmd, omega_cmd, slope, roughness, obstacle_density):
-        """Calculate energy consumption and stability (enhanced physics model)"""
-        # Robot parameters
-        mass = 50.0  # kg
-        g = 9.81  # m/s²
+    def calculate_energy_stability(self, v_cmd, omega_cmd, slope, roughness, obstacle_density, path_length):
+        """
+        Hybrid energy model for Scout Mini with Jetson Orin and Realsense Helios.
+        Combines physics-based terms with insights from the research papers.
         
+        E_total = rolling + turning + obstacle + roughness + slope + kinetic + base + drag
+        where:
+          rolling = C_rr * mass * g * path_length
+          turning = C_t * total_turn_angle
+          obstacle = k_obs * obstacle_density * path_length
+          roughness = k_rough * roughness * path_length
+          slope = mass * g * abs(slope) * path_length * slope_factor
+          kinetic = 0.5 * mass * v_cmd^2 * (path_length / 2.0)
+          base    = P_base * time
+          drag    = k_drag * v_avg * path_length
+          time    = path_length / v_avg   (if v_avg > 0 else fallback)
+
+        Constants are derived from:
+          - mass = 26 kg (Scout Mini)
+          - g = 9.81 m/s²
+          - C_rr = 0.03 (indoor hard floor, Paper 2)
+          - C_t  = 15 J/rad (skid‑steer turning, your tuning)
+          - k_obs = 80 (obstacle negotiation, your earlier value)
+          - k_rough = 40 (roughness penalty, your earlier value)
+          - slope_factor = 0.5 (your earlier value)
+          - P_base = 25 W (Jetson Orin 20W + Realsense Helios 5W + IMU <1W)
+          - k_drag = 1.0 J·s/m² (small speed‑dependent losses, can be tuned)
+        """
+        # Robot & environment constants
+        mass = 26.0                # kg
+        g = 9.81                   # m/s²
+        C_rr = 0.03                 # rolling resistance (indoor floor)
+        C_t = 15.0                  # turning cost (J/rad)
+        k_obs = 80.0                # obstacle negotiation factor (J/m per density)
+        k_rough = 40.0              # roughness factor (J/m per roughness unit)
+        slope_factor = 0.5           # slope energy multiplier
+        P_base = 25.0                # base electronics power (Jetson + sensors + controller) in watts
+        k_drag = 1.0                 # speed‑dependent drag coefficient (J·s/m²)
+
+        # Average speed for time calculation
+        if abs(v_cmd) > 0.1:
+            v_avg = abs(v_cmd)
+        else:
+            v_avg = 0.5              # fallback speed (avoid division by zero)
+
+        time = path_length / v_avg    # seconds
+
+        # Total turning angle from angular velocity
+        total_turn_angle = abs(omega_cmd) * time   # radians
+
         # Energy components
-        kinetic_energy = 0.5 * mass * v_cmd**2
-        turning_energy = 0.1 * mass * abs(omega_cmd)  # Simplified turning model
-        slope_energy = mass * g * abs(slope) * 0.1  # Height change over distance
-        friction_energy = 0.05 * mass * g * roughness * v_cmd
-        obstacle_energy = 0.3 * mass * obstacle_density * v_cmd**2  # Avoidance energy
-        
-        total_energy = kinetic_energy + turning_energy + slope_energy + friction_energy + obstacle_energy
-        
-        # Stability metric (0-1, higher is more stable)
-        base_stability = 1.0
-        
-        # Stability penalties
-        speed_penalty = min(0.3, v_cmd * 0.2)  # Higher speed reduces stability
-        turn_penalty = min(0.3, abs(omega_cmd) * 0.5)  # Sharp turns reduce stability
-        roughness_penalty = min(0.4, roughness * 0.8)  # Rough terrain reduces stability
-        obstacle_penalty = min(0.5, obstacle_density * 1.0)  # Obstacles reduce stability
-        
-        stability = base_stability - speed_penalty - turn_penalty - roughness_penalty - obstacle_penalty
-        stability = max(0.05, min(1.0, stability))  # Clamp to valid range
-        
+        rolling_energy = C_rr * mass * g * path_length
+        turning_energy = C_t * total_turn_angle
+        obstacle_energy = k_obs * obstacle_density * path_length
+        roughness_energy = k_rough * roughness * path_length
+        slope_energy = mass * g * abs(slope) * path_length * slope_factor
+        kinetic_energy = 0.5 * mass * v_cmd**2 * (path_length / 2.0)   # acceleration events
+        base_energy = P_base * time
+        drag_energy = k_drag * v_avg * path_length
+
+        total_energy = (rolling_energy + turning_energy + obstacle_energy +
+                        roughness_energy + slope_energy + kinetic_energy +
+                        base_energy + drag_energy)
+
+        # Clamp to realistic bounds (can be adjusted)
+        total_energy = max(30.0, min(2000.0, total_energy))
+
+        # ---------- Stability calculation (unchanged) ----------
+        base_stability = 0.95
+        obstacle_penalty = min(0.5, obstacle_density * 0.7)
+        roughness_penalty = min(0.4, roughness * 0.5)
+        turn_penalty = min(0.4, abs(omega_cmd) * 0.6)
+        speed_penalty = min(0.3, abs(v_cmd) * 0.15)
+        slope_penalty = min(0.3, abs(slope) * 0.8)
+
+        stability = (base_stability - obstacle_penalty - roughness_penalty -
+                     turn_penalty - speed_penalty - slope_penalty)
+        stability = max(0.1, min(1.0, stability))
+
         return total_energy, stability
     
     def odom_callback(self, msg):
         """Main recording callback - triggered by odometry updates"""
-        # Record at controlled rate (approx 10Hz)
         self.record_counter += 1
-        if self.record_counter % 5 != 0:  # Downsample from ~50Hz to ~10Hz
+        if self.record_counter % 5 != 0:
             return
         
         timestamp = self.get_clock().now().nanoseconds * 1e-9
         
-        # Extract pose
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
         
-        # Calculate yaw from quaternion
         q = msg.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                         1.0 - 2.0 * (q.y**2 + q.z**2))
         
+        current_pos = (x, y)
+        if self.last_position is not None:
+            dx = current_pos[0] - self.last_position[0]
+            dy = current_pos[1] - self.last_position[1]
+            segment_length = math.hypot(dx, dy)
+            self.path_length_accumulator += segment_length
+        self.last_position = current_pos
+        
         v_cmd, omega_cmd = self.last_cmd
         imu_wz = self.last_imu_wz
         
-        # Extract laser features
         obstacle_density, clearance, terrain_type = self.extract_laser_features()
         
-        # Placeholder values for slope and roughness
-        # In a real system, these would come from terrain estimation
-        slope = 0.0  # Get from IMU/terrain estimator
-        roughness = 0.0  # Get from vibration analysis
+        slope = 0.0
+        roughness = 0.0
         
-        # Calculate energy and stability using enhanced model
+        path_length = max(1.0, self.path_length_accumulator)
+        
         sim_energy, sim_stability = self.calculate_energy_stability(
-            v_cmd, omega_cmd, slope, roughness, obstacle_density
+            v_cmd, omega_cmd, slope, roughness, obstacle_density, path_length
         )
         
-        # Record all features
         self.csv_writer.writerow([
             timestamp, x, y, yaw, v_cmd, omega_cmd, imu_wz,
             slope, roughness, obstacle_density, clearance,
-            terrain_type, sim_energy, sim_stability
+            terrain_type, sim_energy, sim_stability, path_length
         ])
         
         self.csv_file.flush()
         
-        # Log progress occasionally
         if self.record_counter % 100 == 0:
             self.get_logger().info(
                 f"Recorded {self.record_counter//5} samples | "
                 f"Pos: ({x:.2f}, {y:.2f}) | "
                 f"Cmd: ({v_cmd:.2f}, {omega_cmd:.2f}) | "
-                f"Obstacles: {obstacle_density:.2f}"
+                f"Obstacles: {obstacle_density:.2f} | "
+                f"Energy: {sim_energy:.1f}J | "
+                f"Path length: {path_length:.1f}m"
             )
     
     def cleanup(self):
-        """Cleanup resources"""
         if hasattr(self, 'csv_file') and self.csv_file:
             self.csv_file.close()
             self.get_logger().info(f"Data recording complete. Saved to {self.filename}")
