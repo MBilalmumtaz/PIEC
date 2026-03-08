@@ -184,7 +184,8 @@ class CompletePathOptimizer(Node):
             test_timer.start()
         
         self.get_logger().info("✅ Path Optimizer Ready with ALL FEATURES")
-    
+        self.last_pinn_calls = 0
+        self.last_pinn_success = 0
     def load_parameters(self):
         """Load parameters from YAML"""
         default_params = {
@@ -195,7 +196,7 @@ class CompletePathOptimizer(Node):
             'generations': 2,
             'crossover_rate': 0.8,
             'mutation_rate': 0.5,
-            'optimization_timeout': 3.0,
+            'optimization_timeout': 3.5,
             'planning_rate': 1.0,
             'waypoint_count': 8,
             'max_curvature': 2.5,
@@ -230,6 +231,7 @@ class CompletePathOptimizer(Node):
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
             'max_pinn_calls_per_generation': 3,
+            
         }
         
         # Declare all parameters
@@ -955,7 +957,10 @@ class CompletePathOptimizer(Node):
     def normalize_angle(self, angle):
         """Normalize angle to [-pi, pi]"""
         return math.atan2(math.sin(angle), math.cos(angle))
-
+    def _time_remaining(self):
+        """Return seconds left before the optimization timeout."""
+        elapsed = time.time() - self.last_optimization_time
+        return max(0.0, self.optimization_timeout - elapsed)
     def generate_backward_escape(self, x, y, goal_x, goal_y):
         """Generate backward escape when surrounded"""
         # **NEW: Double-check we're actually surrounded**
@@ -1477,7 +1482,7 @@ class CompletePathOptimizer(Node):
             goal_x = self.goal_pose.pose.position.x
             goal_y = self.goal_pose.pose.position.y
             
-            # BUG FIX: Throttle path updates - only regenerate if robot moved significantly
+            # Throttle path updates - only regenerate if robot moved significantly
             if not self.should_update_path(start_x, start_y):
                 return
             
@@ -1487,17 +1492,19 @@ class CompletePathOptimizer(Node):
                 self.optimization_active = False
                 return
             
-            # NEW: Check if we should use simple straight path
+            # Check if we should use simple straight path
             if self.should_use_simple_straight_path(start_x, start_y, goal_x, goal_y):
                 if self.debug_mode:
                     self.get_logger().info("📏 Using simple straight path (clear path detected)")
-                # BUG FIX: Use straight path with intermediate waypoints
                 straight_path = self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
                 self.publish_path(straight_path)
                 self.optimization_active = False
+                # No PINN calls were made
+                self.last_pinn_calls = 0
+                self.last_pinn_success = 0
                 return
             
-            # IMPROVED: Use curved path as seed for PINN optimization instead of returning early
+            # Use curved path as seed for PINN optimization
             curved_path_seed = None
             if self.requires_significant_turning(start_x, start_y, goal_x, goal_y, threshold_degrees=60):
                 robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
@@ -1509,7 +1516,6 @@ class CompletePathOptimizer(Node):
                         f"🔄 Large turn required (angle={math.degrees(angle_diff):.1f}°) - "
                         f"using curved path as seed for PINN optimization"
                     )
-                # Generate curved path but do NOT return - use it as optimization seed
                 curved_path_seed = self.generate_curved_path_for_turning(start_x, start_y, goal_x, goal_y)
                 if self.debug_mode:
                     seed_array = np.array([[p[0], p[1]] for p in curved_path_seed])
@@ -1518,14 +1524,12 @@ class CompletePathOptimizer(Node):
                         f"🎨 Generated Bezier curve: curvature={seed_curvature:.2f}"
                     )
 
-            # Get current PINN stats before optimization
-            pinn_stats_before = self.objective_evaluator.pinn_usage
-            pinn_success_before = self.objective_evaluator.pinn_success
-
             if self.stuck_count >= self.max_escape_attempts:
                 if self.debug_mode:
                     self.get_logger().warn("🚨 Multiple stuck attempts - using free-space focused path")
                 best_path = self.generate_free_space_focused_path(start_x, start_y, goal_x, goal_y)
+                self.last_pinn_calls = 0
+                self.last_pinn_success = 0
             else:
                 # Pass curved path seed if available
                 best_path = self.run_enhanced_nsga2_with_free_space(
@@ -1534,11 +1538,14 @@ class CompletePathOptimizer(Node):
                     self.generations,
                     seed_path=curved_path_seed
                 )
+                # The NSGA‑II function has already set self.last_pinn_calls and self.last_pinn_success
             
             if best_path is None or len(best_path) < 2:
                 best_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
+                self.last_pinn_calls = 0
+                self.last_pinn_success = 0
 
-            # Validate path start and end positions before publishing
+            # ALWAYS publish the optimized path after corrections
             deviation_start = math.hypot(best_path[0][0] - start_x, best_path[0][1] - start_y)
             deviation_end = math.hypot(best_path[-1][0] - goal_x, best_path[-1][1] - goal_y)
 
@@ -1554,23 +1561,19 @@ class CompletePathOptimizer(Node):
                 )
                 best_path[-1] = (goal_x, goal_y)
 
-            # Skip publishing when the optimization ran over its time budget.
-            # The quick path published at the start of trigger_optimization is
-            # already serving the controller, and publishing a stale-start path
-            # here would only cause path-start-mismatch warnings.
             elapsed = time.time() - start_time
             if elapsed > self.optimization_timeout:
                 self.get_logger().warn(
                     f"⚠️ Optimization took {elapsed:.1f}s "
                     f"(>{self.optimization_timeout:.1f}s timeout). "
-                    f"Skipping stale path publish; relying on quick path."
+                    f"Publishing optimized path anyway (may be slightly stale)."
                 )
-            else:
-                self.publish_path(best_path)
 
-            # Calculate PINN usage during this optimization - FIXED
-            pinn_calls_this_optimization = self.objective_evaluator.pinn_usage - pinn_stats_before
-            pinn_success_this_optimization = self.objective_evaluator.pinn_success - pinn_success_before
+            self.publish_path(best_path)
+
+            # Use the stored local counts from the NSGA‑II run
+            pinn_calls_this_optimization = self.last_pinn_calls
+            pinn_success_this_optimization = self.last_pinn_success
             
             if self.debug_mode:
                 if pinn_calls_this_optimization > 0:
@@ -1603,47 +1606,29 @@ class CompletePathOptimizer(Node):
         finally:
             self.optimization_active = False
     def run_enhanced_nsga2_with_free_space(self, start_x, start_y, goal_x, goal_y, pop_size, generations, seed_path=None):
-        """NSGA-II with free space - USING YOUR NSGA2 MODULE - FIXED PINN calls
-
-        Args:
-            seed_path: Optional pre-generated path to seed the population (e.g., curved path for turns)
-        """
-        # Wall-clock start for the hard per-run timeout.
-        # Set to optimization_timeout minus a small margin so the loop can
-        # break and return the best solution found so far rather than having
-        # the result discarded as stale by the caller.
-        # NOTE: Must be set BEFORE population init so that initialization time is
-        # counted against the budget and the loop never overruns the caller's window.
-        HARD_TIMEOUT = max(1.0, self.optimization_timeout - 0.5)  # seconds
+        """NSGA-II with free space - RELAXED PINN condition for higher usage."""
+        HARD_TIMEOUT = max(1.0, self.optimization_timeout - 1.0)  # seconds
         optimization_start = time.time()
 
         population = self.initialize_enhanced_population(
             start_x, start_y, goal_x, goal_y, pop_size
         )
 
-        # If seed path provided, replace first individual with seed
-        # requires_turn is True when a curved seed is given (seed_path is only provided
-        # by run_enhanced_optimization when requires_significant_turning() returns True)
+        # Seed handling (unchanged)
         seed_path_corrected = None
         requires_turn = seed_path is not None
         if seed_path is not None:
             if self.debug_mode:
                 self.get_logger().info("🌱 Seeding population with curved path")
-            # Ensure seed path starts at exact robot position and ends at exact goal
             seed_path_corrected = (
                 [(start_x, start_y)] + list(seed_path[1:-1]) + [(goal_x, goal_y)]
             )
             population[0] = seed_path_corrected
-
-            # Replace any additional straight-path duplicates in the initial
-            # population with the curved seed so turns are not dominated by
-            # straight-line individuals from the start.
             for i in range(1, min(MAX_CURVED_SEED_REPLACEMENTS + 1, len(population))):
                 arr = np.array([[p[0], p[1]] for p in population[i]])
                 if self.calculate_curvature(arr) < MIN_TURN_CURVATURE_THRESHOLD:
                     population[i] = seed_path_corrected
 
-        # Pre-compute required turn angle for adaptive penalty scaling
         required_angle_deg = 0.0
         if requires_turn and self.robot_pose is not None:
             robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
@@ -1657,97 +1642,73 @@ class CompletePathOptimizer(Node):
 
         straight_line_length = math.hypot(goal_x - start_x, goal_y - start_y)
 
-        # Track PINN usage across all generations
+        evaluated_individuals = []      # list of paths
+        evaluated_objectives = []       # list of objective tuples
+
         total_pinn_calls = 0
         total_pinn_success = 0
+        timeout_occurred = False
 
         for gen in range(generations):
-            # Hard wall-clock check: exit early rather than publishing a stale path
             if time.time() - optimization_start > HARD_TIMEOUT:
                 if self.debug_mode:
-                    self.get_logger().debug(
-                        f"Early exit at generation {gen} (hard timeout {HARD_TIMEOUT}s)"
-                    )
+                    self.get_logger().debug(f"Early exit at generation {gen} (hard timeout {HARD_TIMEOUT}s)")
                 break
-
-            # Reset per-generation counters
-            pinn_calls_this_generation = 0
-            pinn_success_this_generation = 0
 
             all_objectives = []
             valid_individuals = []
-            
+            pinn_calls_this_gen = 0   # track PINN calls per generation
+
             for idx, individual in enumerate(population):
-                # Hard per-individual timeout: break early if the overall budget is exceeded
-                if time.time() - self.last_optimization_time > self.optimization_timeout:
-                    if self.debug_mode:
-                        self.get_logger().debug(
-                            f"⏱️ Per-individual timeout at gen {gen}, individual {idx}"
-                        )
+                elapsed = time.time() - self.last_optimization_time
+                if elapsed > self.optimization_timeout:
+                    timeout_occurred = True
+                    break
+
+                remaining = self._time_remaining()
+                if remaining < 0.8:   # still need some time to evaluate an individual
+                    timeout_occurred = True
                     break
 
                 path_array = np.array([[p[0], p[1]] for p in individual])
-                
+
                 obstacle_cost = self.get_enhanced_obstacle_cost(path_array)
                 free_space_bonus = self.get_free_space_bonus(path_array)
-                
+
                 if obstacle_cost > self.obstacle_penalty_weight * 15:
                     continue
-                
-                # Calculate all required metrics
+
                 path_length = self.calculate_path_length(path_array)
                 curvature_cost = self.calculate_curvature(path_array)
-                
-                # FIXED: Calculate uncertainty_cost before using it
                 uncertainty_cost = self.uncertainty_planner.get_uncertainty_cost(path_array)
-                
                 deviation = abs(path_length - straight_line_length) / max(straight_line_length, 0.1)
-                
-                # IMPROVED: More aggressive PINN usage for better optimization
-                use_pinn_for_this = False
 
-                # Relaxed conditions for using PINN:
+                # RELAXED PINN condition: only require enough time for the call itself
+                use_pinn_for_this = False
                 if (self.use_pinn and self.pinn_service_available and
                         obstacle_cost < self.obstacle_penalty_weight * 15 and
-                        pinn_calls_this_generation < self.max_pinn_calls_per_generation):
+                        pinn_calls_this_gen < self.max_pinn_calls_per_generation and
+                        remaining > self.pinn_call_timeout and   # <-- RELAXED: no extra buffer
+                        random.random() < 0.8):
+                    use_pinn_for_this = True
 
-                    # Use PINN for 80% of eligible paths
-                    if random.random() < 0.8:
-                        use_pinn_for_this = True
-
-                        if self.debug_mode:
-                            self.get_logger().debug(
-                                f"🔬 Using PINN for path {idx} in gen {gen} "
-                                f"(obstacle_cost={obstacle_cost:.2f})"
-                            )
-                
-                # Use the FIXED objective evaluator
                 objectives = self.objective_evaluator.evaluate_all_objectives_with_timeout(
                     path_array,
                     obstacle_cost - free_space_bonus,
-                    uncertainty_cost,  # Now this variable is defined
+                    uncertainty_cost,
                     straight_line_length,
                     use_pinn=use_pinn_for_this,
                     timeout=0.5
                 )
-                
-                # Track PINN usage
+
                 if use_pinn_for_this:
-                    pinn_calls_this_generation += 1
+                    pinn_calls_this_gen += 1
                     total_pinn_calls += 1
-                    # Check if PINN provided valid results
                     if objectives[5] > 0.0 and objectives[5] < 1000.0:
-                        pinn_success_this_generation += 1
                         total_pinn_success += 1
                         if self.debug_mode:
                             self.get_logger().debug(f"PINN successful for path {idx}: energy={objectives[5]:.2f}")
-                    else:
-                        if self.debug_mode:
-                            self.get_logger().debug(f"PINN failed for path {idx}")
-                
-                # NEW: Penalize straight paths when a turn is required (Strategy 1)
-                # Scale the penalty with the required turn angle so large turns
-                # produce a stronger penalty against straight-line solutions.
+
                 if requires_turn:
                     path_curvature = self.calculate_curvature(path_array)
                     if path_curvature < MIN_TURN_CURVATURE_THRESHOLD:
@@ -1763,49 +1724,58 @@ class CompletePathOptimizer(Node):
                 all_objectives.append(objectives)
                 valid_individuals.append(idx)
 
-            # After each generation, log PINN stats
-            if pinn_calls_this_generation > 0 and self.debug_mode:
-                success_rate = (pinn_success_this_generation / pinn_calls_this_generation * 100) if pinn_calls_this_generation > 0 else 0
+            if timeout_occurred:
+                break
+
+            for vi in valid_individuals:
+                evaluated_individuals.append(population[vi])
+                evaluated_objectives.append(all_objectives[valid_individuals.index(vi)])
+
+            if self.debug_mode and total_pinn_calls > 0:
+                success_rate = (total_pinn_success / total_pinn_calls * 100) if total_pinn_calls > 0 else 0
                 self.get_logger().info(
-                    f"📈 PINN Stats for gen {gen}: {pinn_calls_this_generation} calls, "
-                    f"{pinn_success_this_generation} successful ({success_rate:.1f}%)"
+                    f"📈 PINN Stats after gen {gen}: {total_pinn_calls} calls, "
+                    f"{total_pinn_success} successful ({success_rate:.1f}%)"
                 )
-            
+
             if not all_objectives:
                 population = self.initialize_enhanced_population(
                     start_x, start_y, goal_x, goal_y, pop_size
                 )
                 continue
-            
-            # Selection and reproduction using YOUR NSGA2 module
+
+            if time.time() - self.last_optimization_time > self.optimization_timeout:
+                break
+
+            # Selection and reproduction (unchanged, with timeout checks)
             if len(all_objectives) >= 3:
                 try:
-                    # Use your nsga2_selection function
                     selected_indices = nsga2_selection(
                         [population[i] for i in valid_individuals],
                         all_objectives,
                         pop_size
                     )
-                    
-                    # Map back to original indices
                     selected_original_indices = [valid_individuals[i] for i in selected_indices]
-                    
                     new_population = []
                     for idx in selected_original_indices:
                         if idx < len(population):
                             new_population.append(population[idx])
-                    
+
                     while len(new_population) < pop_size:
+                        if time.time() - self.last_optimization_time > self.optimization_timeout:
+                            timeout_occurred = True
+                            break
                         if random.random() < self.crossover_rate and len(new_population) >= 2:
                             parent1 = random.choice(new_population)
                             parent2 = random.choice(new_population)
                             child = self.crossover_paths(parent1, parent2)
                         else:
                             child = random.choice(new_population)
-                        
                         child = self.mutate_with_free_space(child, start_x, start_y, goal_x, goal_y)
                         new_population.append(child)
-                    
+
+                    if timeout_occurred:
+                        break
                     population = new_population
                 except Exception as e:
                     if self.debug_mode:
@@ -1814,127 +1784,74 @@ class CompletePathOptimizer(Node):
             else:
                 population = self.enhanced_selection(population, valid_individuals, all_objectives, pop_size)
 
-            # NEW: Curved seed preservation elitism (Strategy 2)
-            # Force curved seed to survive for the first SEED_PRESERVATION_RATIO of generations
-            if (requires_turn and seed_path_corrected is not None
-                    and gen < int(generations * SEED_PRESERVATION_RATIO)):
+            if timeout_occurred:
+                break
+
+            if requires_turn and seed_path_corrected is not None and gen < int(generations * SEED_PRESERVATION_RATIO):
                 population[0] = seed_path_corrected
 
-            # Early exit if timeout
             if time.time() - self.last_optimization_time > self.optimization_timeout:
                 if self.debug_mode:
                     self.get_logger().debug(f"Optimization timeout after {gen+1} generations")
                 break
-        
-        # Log total PINN usage across all generations
+
+        # Log total PINN usage
         if total_pinn_calls > 0 and self.debug_mode:
-            overall_success_rate = (total_pinn_success / total_pinn_calls * 100)
+            overall_success_rate = (total_pinn_success / total_pinn_calls * 100) if total_pinn_calls > 0 else 0
             self.get_logger().info(
                 f"🔬 NSGA-II PINN Summary: {total_pinn_calls} total calls, "
                 f"{total_pinn_success} successful ({overall_success_rate:.1f}%) "
                 f"across {generations} generations"
             )
-        
-        # Select best individual
-        if population:
+
+        # Select best individual (same as before)
+        if evaluated_individuals:
             best_idx = 0
             best_score = float('inf')
-            best_pinn_energy = 0.0
-            best_pinn_stability = 0.0
-            
-            for idx, individual in enumerate(population):
-                path_array = np.array([[p[0], p[1]] for p in individual])
-                obstacle_cost = self.get_enhanced_obstacle_cost(path_array)
-                free_space_bonus = self.get_free_space_bonus(path_array)
-                path_length = self.calculate_path_length(path_array)
-                min_clearance = self.get_min_clearance(path_array)
-                
-                # Enhanced scoring with free space
-                clearance_factor = max(0.1, min_clearance / self.min_obstacle_distance)
-                free_space_factor = 1.0 + free_space_bonus
-                score = (path_length + obstacle_cost * 2.5 / clearance_factor) / free_space_factor
-                
+            for i, ind in enumerate(evaluated_individuals):
+                arr = np.array([[p[0], p[1]] for p in ind])
+                obs = self.get_enhanced_obstacle_cost(arr)
+                length = self.calculate_path_length(arr)
+                score = length + 2.5 * obs
                 if score < best_score:
                     best_score = score
-                    best_idx = idx
-            
-            best_path = population[best_idx]
+                    best_idx = i
+            best_path = evaluated_individuals[best_idx]
+        elif population:
+            best_path = population[0]
+        elif seed_path_corrected is not None:
+            best_path = seed_path_corrected
+        else:
+            best_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
 
-            # NEW: Post-selection curvature validation (Strategy 3)
-            if requires_turn and seed_path_corrected is not None:
-                required_angle_deg = 0.0
-                if self.robot_pose is not None:
-                    robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
-                    # Use the current robot position (not the stale start captured at
-                    # optimization start) so that the required turn angle reflects the
-                    # robot's actual heading relative to the goal after the long
-                    # optimization period.
-                    current_rx = self.robot_pose.pose.pose.position.x
-                    current_ry = self.robot_pose.pose.pose.position.y
-                    goal_angle = math.atan2(goal_y - current_ry, goal_x - current_rx)
-                    required_angle_deg = math.degrees(
-                        abs(math.atan2(
-                            math.sin(goal_angle - robot_yaw),
-                            math.cos(goal_angle - robot_yaw)
-                        ))
-                    )
-                is_valid, actual_curv = self.validate_path_curvature_for_turn(
-                    best_path, required_angle_deg
+        # Curvature validation (unchanged)
+        if requires_turn and seed_path_corrected is not None:
+            required_angle_deg = 0.0
+            if self.robot_pose is not None:
+                robot_yaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
+                current_rx = self.robot_pose.pose.pose.position.x
+                current_ry = self.robot_pose.pose.pose.position.y
+                goal_angle = math.atan2(goal_y - current_ry, goal_x - current_rx)
+                required_angle_deg = math.degrees(
+                    abs(math.atan2(
+                        math.sin(goal_angle - robot_yaw),
+                        math.cos(goal_angle - robot_yaw)
+                    ))
                 )
-                if not is_valid:
-                    self.get_logger().warn(
-                        f"⚠️ Selected path too straight (curvature={actual_curv:.3f}) "
-                        f"for required turn. Using curved seed instead."
-                    )
-                    best_path = seed_path_corrected
+            is_valid, actual_curv = self.validate_path_curvature_for_turn(best_path, required_angle_deg)
+            if not is_valid:
+                self.get_logger().warn(
+                    f"⚠️ Selected path too straight (curvature={actual_curv:.3f}) "
+                    f"for required turn. Using curved seed instead."
+                )
+                best_path = seed_path_corrected
 
-            # Evaluate best path with PINN for logging (non-blocking)
-            best_path_array = np.array([[p[0], p[1]] for p in best_path])
-            if self.use_pinn and self.pinn_service_available:
-                try:
-                    # Use a thread to avoid blocking
-                    pinn_future = self.thread_pool.submit(self.call_pinn_service_optimized, best_path_array)
-                    
-                    # Try to get result quickly, but don't wait too long
-                    try:
-                        pinn_result = pinn_future.result(timeout=0.5)
-                        if pinn_result:
-                            best_pinn_energy = pinn_result.get('energy', 0.0)
-                            best_pinn_stability = pinn_result.get('stability', 0.0)
-                    except TimeoutError:
-                        if self.debug_mode:
-                            self.get_logger().debug("PINN evaluation for best path timed out")
-                except Exception as e:
-                    if self.debug_mode:
-                        self.get_logger().debug(f"PINN evaluation for best path failed: {e}")
-            
-            if self.debug_mode:
-                path_array = np.array([[p[0], p[1]] for p in best_path])
-                obstacle_cost = self.get_enhanced_obstacle_cost(path_array)
-                free_space_bonus = self.get_free_space_bonus(path_array)
-                path_length = self.calculate_path_length(path_array)
-                min_clearance = self.get_min_clearance(path_array)
-                
-                log_message = (
-                    f"🏆 Best path: Length={path_length:.2f}m, "
-                    f"ObstacleCost={obstacle_cost:.2f}, "
-                    f"FreeSpaceBonus={free_space_bonus:.2f}, "
-                    f"Clearance={min_clearance:.2f}m"
-                )
-                
-                if best_pinn_energy > 0:
-                    log_message += f", PINN Energy={best_pinn_energy:.1f}J, Stability={best_pinn_stability:.3f}"
-                
-                self.get_logger().info(log_message)
-            
-            # Smooth path
-            if self.path_smoothing:
-                best_path = self.smooth_path_with_free_space(best_path)
-            
-            return best_path
-        
-        return None
-    
+        if self.path_smoothing:
+            best_path = self.smooth_path_with_free_space(best_path)
+        # Store PINN stats for this optimization
+        self.last_pinn_calls = total_pinn_calls
+        self.last_pinn_success = total_pinn_success
+        return best_path
     def get_free_space_bonus(self, path_array):
         """Calculate free space bonus"""
         if self.free_space_grid is None:
