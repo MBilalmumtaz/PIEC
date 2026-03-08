@@ -247,10 +247,10 @@ class PINNService(Node):
             self.get_logger().debug(f"Warmup failed (non-critical): {e}")
     
     def extract_features(self, xs, ys, yaws, velocities):
-        """Extract 10 features for the PINN model"""
+        """Extract 11 raw features for the PINN model (matches training data)"""
         n = len(xs)
         if n < 2:
-            return np.zeros(10, dtype=np.float32)
+            return np.zeros(11, dtype=np.float32)
 
         # Convert to numpy arrays
         xs = np.array(xs, dtype=np.float32)
@@ -258,13 +258,11 @@ class PINNService(Node):
         yaws = np.array(yaws, dtype=np.float32) if len(yaws) >= n else np.zeros(n, dtype=np.float32)
         velocities = np.array(velocities, dtype=np.float32) if len(velocities) >= n else np.full(n, 0.5, dtype=np.float32)
 
-        # If only 2 points (or fewer valid points after filtering), interpolate
-        # intermediate waypoints so path-based features (roughness, detour_ratio,
-        # direction_changes) produce non-trivial values.
+        # Interpolate if only 2 points (to compute meaningful features)
         if n <= 2:
             seg_len = math.sqrt((xs[-1] - xs[0]) ** 2 + (ys[-1] - ys[0]) ** 2)
             if seg_len < 1e-6:
-                return np.zeros(10, dtype=np.float32)
+                return np.zeros(11, dtype=np.float32)
             num_interp = max(10, int(seg_len / 0.3))
             t = np.linspace(0.0, 1.0, num_interp, dtype=np.float32)
             xs = xs[0] + t * (xs[-1] - xs[0])
@@ -273,76 +271,43 @@ class PINNService(Node):
             yaws = np.full(num_interp, yaw_val, dtype=np.float32)
             velocities = np.full(num_interp, np.mean(velocities), dtype=np.float32)
             n = num_interp
-        
-        features = np.zeros(10, dtype=np.float32)
-        
-        # 0: x position (average)
+
+        features = np.zeros(11, dtype=np.float32)
+
+        # 0: average x
         features[0] = np.mean(xs)
-        
-        # 1: y position (average)
+        # 1: average y
         features[1] = np.mean(ys)
-        
-        # 2: yaw angle (average)
+        # 2: average yaw
         features[2] = np.mean(yaws)
-        
-        # 3: linear velocity (average)
+        # 3: average velocity
         features[3] = np.mean(velocities)
-        
-        # 4: angular velocity (estimated from yaw changes)
+        # 4: total absolute angular change (raw, not normalized by length)
         if n > 1:
             yaw_diffs = np.diff(yaws)
             yaw_diffs = (yaw_diffs + np.pi) % (2 * np.pi) - np.pi
-            features[4] = np.mean(np.abs(yaw_diffs)) / 0.1
+            features[4] = np.sum(np.abs(yaw_diffs))
         else:
             features[4] = 0.0
-        
-        # 5: terrain slope (simplified - from path)
-        if n > 1:
-            path_length = np.sum(np.sqrt(np.diff(xs)**2 + np.diff(ys)**2))
-            features[5] = 0.0  # Assume flat for now
-        else:
-            features[5] = 0.0
-        
-        # 6: terrain roughness – average curvature plus segment-length coefficient
-        # of variation (cv = std/mean).  Unequal segment lengths indicate irregular
-        # terrain even on nominally straight paths.
-        curvature = self.calculate_roughness(xs, ys)
-        segment_lengths = np.sqrt(np.diff(xs) ** 2 + np.diff(ys) ** 2)
-        if len(segment_lengths) > 1:
-            seg_cv = float(
-                np.std(segment_lengths) / (np.mean(segment_lengths) + 1e-6)
-            )
-        else:
-            seg_cv = 0.0
-        features[6] = min(curvature + seg_cv * 0.5, 2.0)
-
-        # 7: obstacle density – detour ratio + curvature + direction-change frequency
-        # These three signals are non-zero even for straight paths with varying
-        # segment lengths or slight direction changes, preventing the "all zeros"
-        # failure mode seen when paths are perfectly straight.
-        straight_dist = math.sqrt(
-            (xs[-1] - xs[0]) ** 2 + (ys[-1] - ys[0]) ** 2
-        )
-        path_length = float(np.sum(segment_lengths))
-        detour_ratio = (path_length / max(straight_dist, 0.01)) - 1.0
-        # 0.1 rad (~5.7°) is the minimum yaw change treated as a meaningful
-        # direction change; smaller values are likely noise from path discretisation.
-        direction_changes = float(
-            np.sum(np.abs(np.diff(yaws)) > 0.1)
-        )
-        obs_density = min(
-            1.0,
-            detour_ratio * 0.5
-            + curvature * 0.3
-            + (direction_changes / max(n - 2, 1)) * 0.2,
-        )
-        features[7] = obs_density
-
-        # 8: clearance – inverse of obstacle density with a guaranteed minimum
-        features[8] = max(0.1, 3.0 * (1.0 - obs_density))
-
-        # 9: terrain type (default)
+        # 5: slope (always 0 for now)
+        features[5] = 0.0
+        # 6: roughness (from path curvature)
+        features[6] = self.calculate_roughness(xs, ys)
+        # 7: obstacle density (heuristic from path shape – same as in training fallback)
+        straight_dist = math.sqrt((xs[-1] - xs[0])**2 + (ys[-1] - ys[0])**2)
+        segment_lengths = np.sqrt(np.diff(xs)**2 + np.diff(ys)**2)
+        path_len = np.sum(segment_lengths) if n > 1 else 0.0
+        detour_ratio = (path_len / max(straight_dist, 0.01)) - 1.0
+        curvature = features[6]
+        direction_changes = float(np.sum(np.abs(np.diff(yaws)) > 0.1)) if n > 2 else 0.0
+        obs_density = min(1.0, detour_ratio * 0.5 + curvature * 0.3 + (direction_changes / max(n-2, 1)) * 0.2)
+        features[7] = max(0.0, min(1.0, obs_density))
+        # 8: clearance (inverse of obstacle density)
+        features[8] = max(0.1, 3.0 * (1.0 - features[7]))
+        # 9: terrain type (default 0)
         features[9] = 0.0
+        # 10: raw path length
+        features[10] = path_len
 
         return features
     
@@ -375,7 +340,7 @@ class PINNService(Node):
             return None, None
         
         try:
-            # Extract features
+            # Extract features (raw, same as in training)
             features = self.extract_features(xs, ys, yaws, velocities)
             
             # Diagnostic logging
@@ -396,27 +361,18 @@ class PINNService(Node):
                 if 'mean' in self.scaler and 'std' in self.scaler:
                     mean = np.array(self.scaler['mean'], dtype=np.float32)
                     std = np.array(self.scaler['std'], dtype=np.float32)
-                    # Avoid division by zero
                     std = np.where(std < 1e-6, 1.0, std)
                     features = (features - mean) / std
             
             # Convert to tensor
             input_tensor = torch.FloatTensor(features).unsqueeze(0).to(self.device)
             
-            # Run inference WITH physics constraints to match how the model was
-            # trained (train_pinn.py uses apply_physics_constraints=True).
-            # With constraints: energy output = ReLU(raw) ≥ 0,
-            # stability output = sigmoid(raw) ∈ [0, 1].
-            # Both outputs are still in the *normalized* domain (trained against
-            # z-scored targets), so they must be inverse-scaled afterwards.
-            # NOTE: Do NOT apply sigmoid again after calling the model — it is
-            # already applied inside forward() when apply_physics_constraints=True.
+            # Run inference WITHOUT physics constraints to get raw (unconstrained) outputs
             with torch.no_grad():
                 try:
                     output = self.model(input_tensor,
-                                        apply_physics_constraints=True)
+                                        apply_physics_constraints=False)
                 except TypeError:
-                    # Fallback for models that don't accept this parameter
                     output = self.model(input_tensor)
 
             # Get raw predictions
@@ -424,47 +380,41 @@ class PINNService(Node):
                 output = output.cpu().numpy().flatten()
 
                 if len(output) >= 2:
-                    # Network output is in the normalized domain:
-                    #   energy_norm = ReLU(raw_energy)   → ≥ 0
-                    #   stability_norm = sigmoid(raw_stab) → [0, 1]
-                    # The model was trained against z-scored targets, so these
-                    # values must be inverse-scaled to get physical units.
-                    energy_norm = float(output[0])
-                    stability_norm = float(output[1])
+                    # Raw network outputs (not passed through sigmoid/ReLU)
+                    raw_energy_norm = float(output[0])
+                    raw_stability_norm = float(output[1])
+
+                    # Apply sigmoid to stability (to bring it into [0,1] as in training)
+                    stability_norm = 1.0 / (1.0 + math.exp(-raw_stability_norm))
 
                     if self.scaler is not None and isinstance(self.scaler, dict):
                         if 'Y_mean' in self.scaler and 'Y_std' in self.scaler:
-                            Y_mean = np.array(self.scaler['Y_mean'],
-                                              dtype=np.float32)
-                            Y_std = np.array(self.scaler['Y_std'],
-                                             dtype=np.float32)
+                            Y_mean = np.array(self.scaler['Y_mean'], dtype=np.float32)
+                            Y_std = np.array(self.scaler['Y_std'], dtype=np.float32)
 
-                            # Inverse-scale both outputs first
-                            energy = energy_norm * Y_std[0] + Y_mean[0]
-                            stability_raw = \
-                                stability_norm * Y_std[1] + Y_mean[1]
+                            # Inverse‑scale both outputs
+                            energy = raw_energy_norm * Y_std[0] + Y_mean[0]
+                            stability = stability_norm * Y_std[1] + Y_mean[1]
 
-                            # Safety clamp (values should already be in range
-                            # after inverse-scaling, but guard against edge cases)
+                            # Apply physical constraints after scaling
                             energy = max(0.0, energy)
-                            stability = max(0.1, min(1.0, stability_raw))
+                            stability = max(0.1, min(1.0, stability))
 
-                            if self.diagnostic_mode and \
-                                    self.request_count % 5 == 1:
+                            if self.diagnostic_mode and self.request_count % 5 == 1:
                                 self.get_logger().info(
-                                    f"  Raw: {energy_norm:.3f},"
-                                    f" {stability_norm:.3f} | "
-                                    f"Scaled: {energy:.3f},"
-                                    f" {stability:.3f}"
+                                    f"  Raw: {raw_energy_norm:.3f}, {raw_stability_norm:.3f} | "
+                                    f"Sigmoid: {stability_norm:.3f} | "
+                                    f"Scaled: {energy:.3f}, {stability:.3f}"
                                 )
                         else:
-                            energy = max(0.0, energy_norm)
+                            # No scaler – fallback to simple clamping
+                            energy = max(0.0, raw_energy_norm)
                             stability = max(0.1, min(1.0, stability_norm))
                     else:
-                        energy = max(0.0, energy_norm)
+                        energy = max(0.0, raw_energy_norm)
                         stability = max(0.1, min(1.0, stability_norm))
                     
-                    # Apply energy scaling
+                    # Apply user‑specified energy scaling (if any)
                     energy = energy * self.energy_scale
                     
                     # Clip extreme values
@@ -483,69 +433,111 @@ class PINNService(Node):
             traceback.print_exc()
             return None, None
     
+    def calculate_energy_stability(self, v_cmd, omega_cmd, slope, roughness, obstacle_density, path_length=5.0):
+        """
+        Calculate realistic energy consumption for Scout Mini robot
+        
+        Args:
+            v_cmd: commanded velocity (m/s)
+            omega_cmd: angular velocity (rad/s)
+            slope: terrain slope (rad)
+            roughness: terrain roughness (0-1)
+            obstacle_density: obstacle density (0-1)
+            path_length: length of path segment (m) - should be passed from caller
+        """
+        # Scout Mini parameters
+        mass = 26.0      # kg
+        g = 9.81         # m/s²
+        
+        # Energy model: E = rolling_resistance + turning_cost + obstacle_negotiation + slope_cost
+        
+        # 1. Rolling resistance (dominant term)
+        C_rr = 0.03      # rolling resistance coefficient
+        rolling_energy = C_rr * mass * g * path_length  # ~38J for 5m
+        
+        # 2. Turning cost (skid-steer scrubbing)
+        # Estimate total turn angle from omega_cmd and time
+        # Assuming constant velocity, time = path_length / max(v_cmd, 0.1)
+        time = path_length / max(abs(v_cmd), 0.1)
+        total_turn_angle = abs(omega_cmd) * time  # radians
+        C_t = 12.0       # turning cost coefficient (J/rad)
+        turning_energy = C_t * total_turn_angle   # ~0-60J depending on turns
+        
+        # 3. Obstacle negotiation (major for dense obstacles)
+        # Robots consume extra energy navigating around obstacles
+        obstacle_energy = 50.0 * obstacle_density * path_length  # 0-250J for 5m
+        
+        # 4. Rough terrain penalty (vibration, suspension losses)
+        roughness_energy = 30.0 * roughness * path_length  # 0-150J for 5m
+        
+        # 5. Slope energy (potential energy change)
+        slope_energy = mass * g * abs(slope) * path_length * 0.3  # height change
+        
+        # Total energy - realistic range for 5m path: 100-500J
+        total_energy = rolling_energy + turning_energy + obstacle_energy + roughness_energy + slope_energy
+        
+        # Ensure minimum energy (can't be zero)
+        total_energy = max(30.0, total_energy)
+        
+        # Stability calculation
+        base_stability = 0.9
+        obstacle_penalty = min(0.5, obstacle_density * 0.6)
+        roughness_penalty = min(0.3, roughness * 0.4)
+        turn_penalty = min(0.3, abs(omega_cmd) * 0.5)
+        speed_penalty = min(0.2, abs(v_cmd) * 0.1)
+        
+        stability = base_stability - obstacle_penalty - roughness_penalty - turn_penalty - speed_penalty
+        stability = max(0.1, min(1.0, stability))
+        
+        return total_energy, stability
+       
+    
     def predict_physics_based(self, xs, ys, yaws, velocities):
-        """Fallback physics-based model"""
+        """
+        Fallback physics-based model – realistic Scout Mini energy.
+        """
         n = len(xs)
         if n < 2:
             return 0.0, 1.0
-        
-        # Calculate path length
-        xs_array = np.array(xs, dtype=np.float32)
-        ys_array = np.array(ys, dtype=np.float32)
-        dx = np.diff(xs_array)
-        dy = np.diff(ys_array)
+
+        xs = np.array(xs)
+        ys = np.array(ys)
+        yaws = np.array(yaws)
+
+        dx = np.diff(xs)
+        dy = np.diff(ys)
         path_length = np.sum(np.sqrt(dx**2 + dy**2))
-        
+
+        # Total turning (with angle wrapping)
+        dyaw = np.diff(yaws)
+        dyaw = np.arctan2(np.sin(dyaw), np.cos(dyaw))
+        total_turn = np.sum(np.abs(dyaw))
+
         # Average velocity
         avg_velocity = np.mean(velocities) if velocities else 0.5
-        
-        # Calculate curvature
-        total_curvature = 0.0
-        if n >= 3:
-            for i in range(1, n - 1):
-                dx1 = xs[i] - xs[i-1]
-                dy1 = ys[i] - ys[i-1]
-                dx2 = xs[i+1] - xs[i]
-                dy2 = ys[i+1] - ys[i]
-                
-                norm1 = math.sqrt(dx1*dx1 + dy1*dy1)
-                norm2 = math.sqrt(dx2*dx2 + dy2*dy2)
-                
-                if norm1 > 0 and norm2 > 0:
-                    dot = dx1*dx2 + dy1*dy2
-                    cos_angle = dot / (norm1 * norm2)
-                    cos_angle = max(-1.0, min(1.0, cos_angle))
-                    total_curvature += math.acos(cos_angle)
-        
-        avg_curvature = total_curvature / max(n - 2, 1)
-        
-        # Physics-based model with better stability calculation
-        robot_mass = 50.0
-        wheel_friction = 0.1
-        gravity = 9.81
-        
-        kinetic_energy = 0.5 * robot_mass * avg_velocity**2
-        friction_energy = robot_mass * gravity * wheel_friction * path_length
-        turning_energy = 0.2 * robot_mass * avg_curvature * path_length
-        
-        total_energy = kinetic_energy + friction_energy + turning_energy
-        
-        # FIXED: Better stability calculation
-        base_stability = 0.9  # Higher base for clear paths
 
-        # Penalties
-        curvature_penalty = 0.4 * min(avg_curvature, 1.0)
-        speed_penalty = 0.1 * min(avg_velocity, 2.0)
+        # Scout Mini parameters
+        mass = 26.0
+        g = 9.81
+        C_rr = 0.03
+        C_t = 15.0
+
+        # Energy components
+        motion_energy = C_rr * mass * g * path_length
+        turning_energy = C_t * total_turn
+
+        total_energy = motion_energy + turning_energy
+
+        # Stability heuristic
+        base_stability = 0.9
+        turn_density = total_turn / max(path_length, 0.1)
+        curvature_penalty = min(0.4, turn_density * 2.0)
+        speed_penalty = min(0.2, avg_velocity * 0.15)
 
         stability = base_stability - curvature_penalty - speed_penalty
         stability = max(0.1, min(1.0, stability))
-        
-        # Add some randomness for challenging paths
-        if avg_curvature > 0.5:
-            stability = max(0.2, stability - 0.2)
-        
+
         return float(total_energy), float(stability)
-    
     def evaluate_callback(self, request, response):
         """Service callback with actual neural network inference"""
         request_start = time.time()
