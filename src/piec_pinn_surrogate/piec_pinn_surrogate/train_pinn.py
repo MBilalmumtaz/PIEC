@@ -33,7 +33,8 @@ def load_csv(path):
     # 7: slope, 8: roughness, 9: obstacle_density, 10: clearance,
     # 11: terrain_type, 12: sim_energy, 13: sim_stability
 
-    # Input features - now 10 dimensions including laser features
+    # Input features - now 11 dimensions including laser features
+    path_length = data[:, 14]   # new column index
     xs = data[:, 1]          # x position
     ys = data[:, 2]          # y position
     yaws = data[:, 3]        # yaw angle
@@ -47,7 +48,7 @@ def load_csv(path):
 
     X = np.stack([
         xs, ys, yaws, velocities, omegas,
-        slopes, roughness, obstacle_density, clearance, terrain_type
+        slopes, roughness, obstacle_density, clearance, terrain_type, path_length
     ], axis=1).astype(np.float32)
 
     # Outputs: energy and stability (ground truth from simulation)
