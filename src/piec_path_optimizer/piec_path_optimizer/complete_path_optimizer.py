@@ -14,11 +14,15 @@ import time
 import threading
 from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-
+# At the top of your file, add import
+from nav_msgs.msg import OccupancyGrid
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped, Quaternion, PoseArray, Pose
 from sensor_msgs.msg import LaserScan
-
+from tf2_ros import Buffer, TransformListener
+from tf2_geometry_msgs import do_transform_point
+from geometry_msgs.msg import PointStamped
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 # Try to import the correct PINN service
 try:
     from piec_pinn_surrogate_msgs.srv import EvaluateTrajectory
@@ -86,7 +90,7 @@ class CompletePathOptimizer(Node):
         
         self.get_logger().info("🚀 PINN-Integrated Path Optimizer - ALL FEATURES RESTORED")
         self.get_logger().info(f"Using PINN: {self.use_pinn}")
-        
+        self.laser_frame = None
         # State variables
         self.robot_pose = None
         self.goal_pose = None
@@ -186,12 +190,28 @@ class CompletePathOptimizer(Node):
         self.get_logger().info("✅ Path Optimizer Ready with ALL FEATURES")
         self.last_pinn_calls = 0
         self.last_pinn_success = 0
+        # In __init__, add a publisher
+        self.costmap_pub = self.create_publisher(OccupancyGrid, '/costmap', 10)
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        # Create a BEST_EFFORT QoS profile for laser scan
+        scan_qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST
+        )
+        self.laser_sub = self.create_subscription(
+            LaserScan,
+            self.laser_topic,
+            self.laser_callback,
+            scan_qos
+        )
     def load_parameters(self):
         """Load parameters from YAML"""
         default_params = {
             'goal_topic': '/goal_pose',
             'odom_topic': '/ukf/odom',
-            'laser_topic': '/scan_fixed',
+            'laser_topic': '/scan',
             'population_size': 6,
             'generations': 2,
             'crossover_rate': 0.8,
@@ -528,7 +548,41 @@ class CompletePathOptimizer(Node):
                 'success': False,
                 'timeout': False
             }
-    
+    def recenter_obstacle_grid(self, robot_x, robot_y):
+        """
+        Shift the obstacle grid so that the robot is at the center.
+        Called when robot moves beyond a threshold.
+        """
+        if self.obstacle_grid is None:
+            return
+
+        half_size = (self.obstacle_grid_size * self.obstacle_grid_resolution) / 2.0
+        current_center_x, current_center_y = self.obstacle_grid_origin
+
+        # If robot is still within the central region (e.g., 2 m), do nothing
+        if math.hypot(robot_x - current_center_x, robot_y - current_center_y) < 2.0:
+            return
+
+        # Compute offset in grid cells
+        dx_cells = int((robot_x - current_center_x) / self.obstacle_grid_resolution)
+        dy_cells = int((robot_y - current_center_y) / self.obstacle_grid_resolution)
+
+        # Create a new zeroed grid
+        new_grid = np.zeros((self.obstacle_grid_size, self.obstacle_grid_size), dtype=np.float32)
+
+        # Copy overlapping region from old grid to new grid
+        for i in range(self.obstacle_grid_size):
+            for j in range(self.obstacle_grid_size):
+                old_i = i - dx_cells
+                old_j = j - dy_cells
+                if 0 <= old_i < self.obstacle_grid_size and 0 <= old_j < self.obstacle_grid_size:
+                    new_grid[i, j] = self.obstacle_grid[old_i, old_j]
+
+        self.obstacle_grid = new_grid
+        self.obstacle_grid_origin = (robot_x, robot_y)
+
+        if self.debug_mode:
+            self.get_logger().info(f"Re‑centered costmap to ({robot_x:.2f}, {robot_y:.2f})")
     def odom_callback(self, msg: Odometry):
         """Update robot pose"""
         self.robot_pose = msg
@@ -554,7 +608,11 @@ class CompletePathOptimizer(Node):
         
         # Update uncertainty planner
         self.uncertainty_planner.update_uncertainty_map(msg)
-    
+        self.last_position = current_pos
+
+        # Re‑center costmap if needed
+        if self.obstacle_grid_origin is not None:
+            self.recenter_obstacle_grid(msg.pose.pose.position.x, msg.pose.pose.position.y)
     def is_straight_path_clear(self, start_x, start_y, goal_x, goal_y, check_distance=3.0):
         """Check if straight line to goal is clear for a certain distance"""
         if self.obstacle_grid is None:
@@ -580,7 +638,6 @@ class CompletePathOptimizer(Node):
                 return False
         
         return True
-    
     def requires_significant_turning(self, start_x, start_y, goal_x, goal_y, threshold_degrees=30):
         """Check if goal requires significant turning from current robot orientation"""
         if self.robot_pose is None:
@@ -2264,64 +2321,145 @@ class CompletePathOptimizer(Node):
     def laser_callback(self, msg: LaserScan):
         """Laser callback"""
         self.laser_scan = msg.ranges
-        
+        self.laser_frame = msg.header.frame_id   # store the frame_id from the message
+
+        # Debug: print the laser frame every 2 seconds
+        self.get_logger().info(f"Laser frame: {self.laser_frame}", throttle_duration_sec=2.0)
+
         if self.scan_angles is None:
             self.scan_angles = [
                 msg.angle_min + i * msg.angle_increment
                 for i in range(len(msg.ranges))
             ]
     
-    def update_obstacle_map(self):
-        """Update obstacle map"""
-        if self.robot_pose is None or self.laser_scan is None:
+    def publish_costmap(self):
+        if self.obstacle_grid is None or self.obstacle_grid_origin is None:
             return
-        
-        rx = self.robot_pose.pose.pose.position.x
-        ry = self.robot_pose.pose.pose.position.y
-        ryaw = self.quat_to_yaw(self.robot_pose.pose.pose.orientation)
-        
-        self.obstacle_grid *= 0.8
-        
+
+        ox, oy = self.obstacle_grid_origin
+        resolution = self.obstacle_grid_resolution
+        grid_size = self.obstacle_grid_size
+        half_size = (grid_size * resolution) / 2.0
+        origin_x = ox - half_size
+        origin_y = oy - half_size
+
+        # Debug: print max occupancy and origin
+        max_val = np.max(self.obstacle_grid)
+        self.get_logger().info(
+            f"Costmap origin: ({origin_x:.2f}, {origin_y:.2f}), max occupancy: {max_val:.2f}",
+            throttle_duration_sec=2.0
+        )
+
+        # ... rest unchanged
+
+        # Print current robot position and map origin
+        if self.robot_pose:
+            rx = self.robot_pose.pose.pose.position.x
+            ry = self.robot_pose.pose.pose.position.y
+            self.get_logger().info(
+                f"Map origin: ({origin_x:.2f}, {origin_y:.2f}) | "
+                f"Robot: ({rx:.2f}, {ry:.2f}) | "
+                f"Max grid value: {np.max(self.obstacle_grid):.3f}",
+                throttle_duration_sec=2.0
+            )
+
+        grid_msg = OccupancyGrid()
+        grid_msg.header.stamp = self.get_clock().now().to_msg()
+        grid_msg.header.frame_id = 'odom'
+        grid_msg.info.resolution = resolution
+        grid_msg.info.width = grid_size
+        grid_msg.info.height = grid_size
+        grid_msg.info.origin.position.x = origin_x
+        grid_msg.info.origin.position.y = origin_y
+        grid_msg.info.origin.position.z = 0.0
+        grid_msg.info.origin.orientation.w = 1.0
+
+        # Convert grid values to occupancy (0‑100)
+        grid_data = []
+        threshold = 0.1   # lower threshold to see obstacles better
+        for i in range(grid_size):
+            for j in range(grid_size):
+                val = self.obstacle_grid[i, j]
+                if val > threshold:
+                    occ = 100
+                elif val > 0.05:
+                    occ = int(val * 100)
+                else:
+                    occ = 0
+                grid_data.append(occ)
+
+        grid_msg.data = grid_data
+        self.costmap_pub.publish(grid_msg)
+    def update_obstacle_cells(self, x, y, range_val):
+        """Update obstacle cells: mark a small area around the hit point."""
+        if self.obstacle_grid_origin is None:
+            return
+
+        ox, oy = self.obstacle_grid_origin
+        resolution = self.obstacle_grid_resolution
+        grid_size = self.obstacle_grid_size
+
+        grid_x = int((x - ox) / resolution) + grid_size // 2
+        grid_y = int((y - oy) / resolution) + grid_size // 2
+
+        # Mark a 3x3 area (0.3 m) to account for beam width and uncertainty
+        radius_cells = 1  # 1 cell on each side = 3x3
+        for dx in range(-radius_cells, radius_cells + 1):
+            for dy in range(-radius_cells, radius_cells + 1):
+                gx = grid_x + dx
+                gy = grid_y + dy
+                if 0 <= gx < grid_size and 0 <= gy < grid_size:
+                    # Set a high occupancy value (0.9)
+                    self.obstacle_grid[gx, gy] = 0.9
+    def update_obstacle_map(self):
+        """Update obstacle map by transforming laser points to odom using TF."""
+        if self.robot_pose is None or self.laser_scan is None or self.laser_frame is None:
+            return
+
+        try:
+            trans = self.tf_buffer.lookup_transform(
+                'odom',
+                self.laser_frame,
+                rclpy.time.Time(),
+                rclpy.duration.Duration(seconds=0.1)  # timeout 0.1 s
+            )
+        except Exception as e:
+            self.get_logger().warn(
+                f"TF lookup from {self.laser_frame} to odom failed: {e}",
+                throttle_duration_sec=1.0
+            )
+            return
+
+        # Decay previous obstacles (slower decay)
+        self.obstacle_grid *= 0.95   # was 0.8
         for i, range_val in enumerate(self.laser_scan):
             if 0.1 < range_val < 10.0:
                 angle = self.scan_angles[i]
-                
                 local_x = range_val * math.cos(angle)
                 local_y = range_val * math.sin(angle)
-                
-                world_x = rx + local_x * math.cos(ryaw) - local_y * math.sin(ryaw)
-                world_y = ry + local_x * math.sin(ryaw) + local_y * math.cos(ryaw)
-                
+                local_z = 0.0
+
+                p = PointStamped()
+                p.header.frame_id = self.laser_frame
+                p.header.stamp = self.get_clock().now().to_msg()
+                p.point.x = local_x
+                p.point.y = local_y
+                p.point.z = local_z
+
+                try:
+                    p_odom = do_transform_point(p, trans)
+                except Exception as e:
+                    self.get_logger().warn(f"Transform failed: {e}", throttle_duration_sec=1.0)
+                    continue
+
+                world_x = p_odom.point.x
+                world_y = p_odom.point.y
+
                 self.update_obstacle_cells(world_x, world_y, range_val)
+
+        self.publish_costmap()
     
-    def update_obstacle_cells(self, x, y, range_val):
-        """Update obstacle cells"""
-        grid_size = self.obstacle_grid_size
-        resolution = self.obstacle_grid_resolution
-        
-        if self.obstacle_grid_origin is None:
-            self.obstacle_grid_origin = (x, y)
-            ox, oy = 0, 0
-        else:
-            ox, oy = self.obstacle_grid_origin
-        
-        grid_x = int((x - ox) / resolution) + grid_size // 2
-        grid_y = int((y - oy) / resolution) + grid_size // 2
-        
-        obstacle_radius_cells = max(2, int(self.robot_radius / resolution))
-        
-        for dx in range(-obstacle_radius_cells, obstacle_radius_cells + 1):
-            for dy in range(-obstacle_radius_cells, obstacle_radius_cells + 1):
-                gx = grid_x + dx
-                gy = grid_y + dy
-                
-                if 0 <= gx < grid_size and 0 <= gy < grid_size:
-                    dist = math.hypot(dx, dy) * resolution
-                    if dist < self.robot_radius * 1.5:
-                        value = 1.2 - (dist / (self.robot_radius * 1.5))
-                        value = min(value, 1.0)
-                        if value > self.obstacle_grid[gx, gy]:
-                            self.obstacle_grid[gx, gy] = value
+
     
     def get_clearance_at_point(self, x, y):
         """Get clearance at point"""
@@ -2657,7 +2795,9 @@ def main():
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info("Shutting down...")
+        pass
+    except Exception as e:
+        node.get_logger().error(f"Exception in spin: {e}")
     finally:
         node.destroy_node()
         rclpy.shutdown()
