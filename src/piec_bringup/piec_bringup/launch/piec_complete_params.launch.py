@@ -164,26 +164,7 @@ def generate_launch_description():
     )
     
     
-    # 7.3 Laser Bridge
-    ld.add_action(
-        Node(
-            package="piec_controller",
-            executable="laser_bridge",
-            name="laser_bridge",
-            output="screen",
-            parameters=[{
-                "min_range": 0.1,
-                "max_range": 8.0,
-                "range_filter_window": 3,
-                "median_filter": True,
-                "input_topic": "/laser_scan",
-                "output_fixed_topic": "/scan_fixed",
-                "output_scan_topic": "/scan",
-                "use_sim_time": use_sim_time,
-            }],
-        )
-    )
-    
+
     # 7.4 PINN-INTEGRATED PATH OPTIMIZER
     ld.add_action(
         Node(
@@ -196,14 +177,14 @@ def generate_launch_description():
                 "use_sim_time": use_sim_time,
                 "use_pinn_predictions": True,
                 "pinn_service_name": "/evaluate_trajectory",
-                "population_size": 8,
-                "generations": 4,
+                "population_size": 15,
+                "generations": 6,
+                "laser_topic": "/scan",
                 "optimization_timeout": 2.0,
                 "planning_rate": 1.5,
-                "waypoint_count": 12,
+                "waypoint_count": 8,
                 "max_curvature": 1.5,
                 "path_smoothing": True,
-                "max_pinn_calls_per_generation": 6,
                 "objective_weights": [0.15, 0.1, 0.15, 0.1, 0.1, 0.25, 0.15],
                 "debug_mode": True,
                 "log_fitness": True,
@@ -231,6 +212,7 @@ def generate_launch_description():
                 "waypoint_tolerance": 0.3,
                 "lookahead_distance": 0.8,
                 "control_frequency": 15.0,
+                "scan_topic": "/scan", 
                 "debug_mode": True,
                 "require_explicit_goal": True,
                 "path_topic": "/piec/path",
@@ -251,7 +233,7 @@ def generate_launch_description():
                 "slow_distance": 0.4,
                 "enable_emergency_stop": True,
                 "use_sim_time": use_sim_time,
-                "scan_topic": "/scan_fixed",
+                "scan_topic": "/scan",
                 "cmd_vel_topic": "/cmd_vel",
                 "output_topic": "/cmd_vel_safe",
             }],
