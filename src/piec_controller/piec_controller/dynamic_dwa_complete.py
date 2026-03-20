@@ -13,9 +13,9 @@ import time
 # New values (120/90/60) match controller_node.py rotate_in_place_angle_deg setting
 ROTATION_THRESHOLD_FAR_DISTANCE = 2.0  # Distance threshold for far range (meters)
 ROTATION_THRESHOLD_MID_DISTANCE = 0.5  # Distance threshold for mid range (meters)
-ROTATION_THRESHOLD_FAR_ANGLE = 	90  # Rotation threshold when far from goal (degrees) - INCREASED to 120°
-ROTATION_THRESHOLD_MID_ANGLE = 60  # Rotation threshold in mid range (degrees) - INCREASED to 90°
-ROTATION_THRESHOLD_CLOSE_ANGLE = 30  # Rotation threshold when close to goal (degrees) - INCREASED to 60°
+ROTATION_THRESHOLD_FAR_ANGLE = 90      # Rotation threshold when far from goal (degrees)
+ROTATION_THRESHOLD_MID_ANGLE = 60       # Rotation threshold in mid range (degrees)
+ROTATION_THRESHOLD_CLOSE_ANGLE = 30     # Rotation threshold when close to goal (degrees)
 
 # Maximum rotation time before forcing forward motion (seconds)
 MAX_ROTATION_TIME = 5.0
@@ -34,12 +34,12 @@ class DynamicDWAComplete:
         self.v_resolution = 0.05
         self.w_resolution = 0.05
         
-        # Enhanced weights
+        # Enhanced weights – increased path weight to improve tracking, and clearance weight for safety
         self.w_goal = 1.5
         self.w_speed = 0.7
-        self.w_clearance = 3.0  # Increased
-        self.w_path = 4.0  # Increased from 2.0 for stronger path alignment
-        self.w_free_space = 0.8  # NEW: Free space preference
+        self.w_clearance = 5.0      # Increased from 3.0 to prioritise avoiding obstacles
+        self.w_path = 8.0            # Increased from 4.0 to strongly encourage following the path
+        self.w_free_space = 0.8      # NEW: Free space preference
         
         # Robot parameters
         self.robot_radius = 0.35
@@ -152,6 +152,14 @@ class DynamicDWAComplete:
                 self.node.get_logger().warn(f"DWA planning error: {e}")
             return self.fallback_control(current_pose, path)
 
+    # --------------------------------------------------------------------------
+    # The rest of the methods (calculate_dynamic_limits, generate_trajectory,
+    # check_trajectory, calc_goal_score, calc_speed_score, calc_clearance_score,
+    # calc_path_score, calc_free_space_score, get_clearance_at, get_clearance_in_direction_scan,
+    # calc_min_clearance, fallback_control) remain unchanged.
+    # Please keep your existing implementations for these methods.
+    # --------------------------------------------------------------------------
+
     def calculate_dynamic_limits(self, scan_ranges, scan_angles, robot_theta):
         """Calculate dynamic velocity limits based on obstacles and free space - MAX SPEED in open space"""
         max_v = self.max_v
@@ -250,34 +258,28 @@ class DynamicDWAComplete:
         
         return True
 
-    def check_collision(self, dist, angle, scan_ranges, scan_angles, safety_margin=0.1):
-        """Check for collision at a specific point with safety margin
-        
-        Returns:
-            True if no collision (safe)
-            False if collision detected (unsafe)
+    def check_collision(self, dist, angle, scan_ranges, scan_angles, safety_margin=0.05):
+        """
+        Check for collision at a specific point with safety margin.
+        Returns True if no collision (safe), False if collision.
         """
         if scan_ranges is None or scan_angles is None:
             return True  # No scan data, assume safe
-        
+
         # Find closest scan angle
         min_angle_diff = float('inf')
         closest_idx = 0
-        
         for i, scan_angle in enumerate(scan_angles):
             angle_diff = abs(scan_angle - angle)
             if angle_diff < min_angle_diff:
                 min_angle_diff = angle_diff
                 closest_idx = i
-        
+
         if closest_idx < len(scan_ranges):
             scan_dist = scan_ranges[closest_idx]
-            # FIXED: Check if obstacle is CLOSER than where we want to go
-            # If obstacle distance is less than our required clearance, it's a collision
-            required_clearance = dist + self.robot_radius + safety_margin
-            if 0.1 < scan_dist < required_clearance:
-                return False  # Collision! Obstacle is too close
-        
+            # Required clearance is the distance from robot center to the point plus robot radius
+            if 0.1 < scan_dist < dist + self.robot_radius + safety_margin:
+                return False  # Collision!
         return True
 
     def calc_goal_score(self, trajectory, path):
