@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Complete launch file for PIEC stack with PINN - REAL ROBOT VERSION (FIXED)
-Matches simulation configuration and adds LiDAR self‑filtering.
+Matches simulation configuration as closely as possible.
 """
 
 from launch import LaunchDescription
@@ -37,7 +37,7 @@ def generate_launch_description():
         "use_sim_time", default_value="false"
     ))
     ld.add_action(DeclareLaunchArgument(
-        "use_teleop", default_value="false"
+        "use_teleop", default_value="true"
     ))
     ld.add_action(DeclareLaunchArgument(
         "use_lidar", default_value="true"
@@ -118,9 +118,9 @@ def generate_launch_description():
             output='screen'
         )
     )
-   
+    
     # ------------------------------------------------------------------
-    # 6. Scout Mini parameters (same as simulation, but speed limits may be reduced for safety)
+    # 5. Scout Mini parameters (same as simulation, but speed limits may be reduced for safety)
     # ------------------------------------------------------------------
     scout_mini_params = {
         "robot_radius": 0.3,
@@ -133,10 +133,10 @@ def generate_launch_description():
     }
     
     # ------------------------------------------------------------------
-    # 7. PIEC stack nodes (matching simulation configuration)
+    # 6. PIEC stack nodes (matching simulation configuration)
     # ------------------------------------------------------------------
     
-    # 7.1 PINN Service
+    # 6.1 PINN Service
     pinn_service_node = Node(
         package="piec_pinn_surrogate",
         executable="pinn_service",
@@ -202,8 +202,8 @@ def generate_launch_description():
         }],
     )
     ld.add_action(ukf_localization_node)
-    
-    # 7.4 PINN‑Integrated Path Optimizer 
+
+    # 6.4 PINN‑Integrated Path Optimizer (uses /scan_processed)
     pinn_path_optimizer_node = Node(
         package="piec_path_optimizer",
         executable="complete_path_optimizer",
@@ -221,6 +221,8 @@ def generate_launch_description():
             "waypoint_count": 8,
             "max_curvature": 1.0,
             "path_smoothing": True,
+            "obstacle_penalty_weight": 100.0,        # was 20.0
+            "min_obstacle_distance": 0.6,           # Reduced from 0.6,0.5
             "objective_weights": [0.15, 0.1, 0.15, 0.1, 0.1, 0.25, 0.15],
             "debug_mode": True,
             "log_fitness": True,
@@ -232,7 +234,7 @@ def generate_launch_description():
     )
     ld.add_action(pinn_path_optimizer_node)
     
-    # 7.5 Controller – publishes directly to /cmd_vel (no mux)
+    # 6.5 Controller – publishes directly to /cmd_vel (no mux)
     controller_node = Node(
         package="piec_controller",
         executable="controller_node",
@@ -244,9 +246,9 @@ def generate_launch_description():
             "max_linear_vel": 0.8,
             "min_linear_vel": 0.15,
             "max_angular_vel": 0.6,
-            "emergency_stop_distance": 0.3,
-            "slow_down_distance": 0.7,
-            "safe_distance": 1.0,
+            "emergency_stop_distance": 0.62,
+            "slow_down_distance": 0.92,
+            "safe_distance": 1.5,
             "waypoint_tolerance": 0.4,
             "lookahead_distance": 1.2,
             "control_frequency": 10.0,
@@ -256,9 +258,9 @@ def generate_launch_description():
             "debug_mode": True,
             "require_explicit_goal": True,            # Same as simulation
             "path_topic": "/piec/path",
-            "cmd_vel_topic": "/cmd_vel",               # Direct output to robot
+            "cmd_vel_topic": "/cmd_vel_piec",               # Direct output to robot
             "odom_topic": "/ukf/odom",
-            "scan_topic": "/scan",          
+            "scan_topic": "/scan",          # Use processed scan
             "use_sim_time": use_sim_time,
             "use_dwa": False,                          # Same as simulation
             "use_pinn_in_controller": False,
@@ -271,28 +273,43 @@ def generate_launch_description():
     )
     ld.add_action(controller_node)
     
-    # 7.6 (Optional) Emergency Stop – disabled for now to avoid command conflicts.
+    # 6.6 (Optional) Emergency Stop – disabled for now to avoid command conflicts.
     # If you want to use it, you would need a mux to switch between normal and emergency commands.
     # For simplicity, we omit it.
-    
-    # 7.7 Teleop – optional keyboard control (publishes to /cmd_vel_teleop, but we don't mux it)
+    # 6.6 Emergency Stop
+    emergency_stop_node = Node(
+        package="piec_controller",
+        executable="emergency_stop",
+        name="emergency_stop",
+        output="screen",
+        condition=IfCondition(enable_piecnodes),
+        parameters=[{
+            "stop_distance": 0.62,  # Increased from 0.2
+            "slow_distance": 0.92,  # Increased from 0.4
+            "enable_emergency_stop": True,
+            "use_sim_time": use_sim_time,
+            "scan_topic": "/scan",
+            "cmd_vel_topic": "/cmd_vel_piec",
+            "output_topic": "/cmd_vel",
+        }],
+    )
+    ld.add_action(emergency_stop_node)
+    # 6.7 Teleop – optional keyboard control (publishes to /cmd_vel_teleop, but we don't mux it)
     # Since we removed the mux, teleop would conflict with controller if both publish to /cmd_vel.
     # Either run teleop only when controller is stopped, or use a different topic.
     # We'll keep it commented for now.
-    # teleop_piec_node = Node(
-    #     package='teleop_twist_keyboard',
-    #     executable='teleop_twist_keyboard',
-    #     name='teleop_piec',
-    #     output='screen',
-    #     prefix='gnome-terminal --',
-    #     parameters=[{'use_sim_time': use_sim_time, 'speed': 0.5, 'turn': 1.0}],
-    #  
-    #     remappings=[('/cmd_vel', '/cmd_vel_teleop')],
-    #     condition=IfCondition(use_teleop)
-    # )
-    # ld.add_action(teleop_piec_node)
-    
-    # 7.8 Dynamics node (optional)
+    teleop_piec_node = Node(
+        package='teleop_twist_keyboard',
+        executable='teleop_twist_keyboard',
+        name='teleop_piec',
+        output='screen',
+        prefix='gnome-terminal --',
+        parameters=[{'use_sim_time': use_sim_time, 'speed': 0.5, 'turn': 1.0}],
+        remappings=[('/cmd_vel', '/cmd_vel_teleop')],
+        condition=IfCondition(use_teleop)
+    )
+    ld.add_action(teleop_piec_node)
+    # 6.8 Dynamics node (optional)
     dynamics_node = Node(
         package="piec_dynamics",
         executable="dynamics_node",
@@ -304,11 +321,11 @@ def generate_launch_description():
             "output_dir": os.path.expanduser("~/piec_dynamics"),
             "use_sim_time": use_sim_time,
         }],
-        remappings=[("/imu/data", "/imu")],
+        remappings=[("/openzen/data", "/imu")],
     )
     ld.add_action(dynamics_node)
     
-    # 7.9 Metrics collector (optional)
+    # 6.9 Metrics collector (optional)
     metrics_collector_node = Node(
         package="piec_validation",
         executable="metrics_collector",
@@ -323,7 +340,7 @@ def generate_launch_description():
     )
     ld.add_action(metrics_collector_node)
     
-    # 7.10 TF validator (optional)
+    # 6.10 TF validator (optional)
     tf_validator_node = Node(
         package="piec_bringup",
         executable="tf_validator",
@@ -333,7 +350,7 @@ def generate_launch_description():
     )
     ld.add_action(tf_validator_node)
     
-    # 7.11 Experiment recorder (optional)
+    # 6.11 Experiment recorder (optional)
     experiment_recorder_node = Node(
         package="piec_bringup",
         executable="experiment_recorder",
@@ -351,6 +368,6 @@ def generate_launch_description():
     )
     ld.add_action(experiment_recorder_node)
     
-
+  
     
     return ld
