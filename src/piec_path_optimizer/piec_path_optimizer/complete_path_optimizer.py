@@ -22,7 +22,7 @@ from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformListener
 from tf2_geometry_msgs import do_transform_point
 from geometry_msgs.msg import PointStamped
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, HistoryPolicy
 # Try to import the correct PINN service
 try:
     from piec_pinn_surrogate_msgs.srv import EvaluateTrajectory
@@ -159,7 +159,7 @@ class CompletePathOptimizer(Node):
         # Subscribers
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.odom_callback, 10)
         self.goal_sub = self.create_subscription(PoseStamped, self.goal_topic, self.goal_callback, 10)
-        self.laser_sub = self.create_subscription(LaserScan, self.laser_topic, self.laser_callback, 10)
+        #self.laser_sub = self.create_subscription(LaserScan, self.laser_topic, self.laser_callback, 10)
         
         # Publishers
         self.path_pub = self.create_publisher(Path, '/piec/path', 10)
@@ -176,7 +176,7 @@ class CompletePathOptimizer(Node):
         
         # Timers
         self.optimization_timer = self.create_timer(self.planning_rate, self.optimization_timer_callback)
-        self.obstacle_timer = self.create_timer(0.15, self.update_obstacle_map)
+        self.obstacle_timer = self.create_timer(0.1, self.update_obstacle_map)
         self.stuck_check_timer = self.create_timer(1.0, self.check_stuck_status)
         self.free_space_timer = self.create_timer(2.0, self.update_free_space_map)
         self.progress_timer = self.create_timer(2.0, self.check_progress)
@@ -196,9 +196,12 @@ class CompletePathOptimizer(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
         # Create a BEST_EFFORT QoS profile for laser scan
         scan_qos = QoSProfile(
+     
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            durability=QoSDurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
             depth=10,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST
+
         )
         self.laser_sub = self.create_subscription(
             LaserScan,
@@ -226,8 +229,8 @@ class CompletePathOptimizer(Node):
             'pinn_timeout': 2.0,  # Initial connection timeout
             'pinn_call_timeout': 2.0,
             'objective_weights': [0.12, 0.08, 0.35, 0.08, 0.12, 0.15, 0.1],
-            'obstacle_penalty_weight': 6.0,
-            'min_obstacle_distance': 0.4,
+            "obstacle_penalty_weight": 100.0,        # Increased from 6.0,12
+            "min_obstacle_distance": 0.6,           # Reduced from 0.6
             'escape_clearance': 0.7,
             'max_escape_attempts': 3,
             'escape_cooldown': 6.0,
@@ -250,7 +253,7 @@ class CompletePathOptimizer(Node):
             'min_escape_distance': 1.0,
             'escape_backup_distance': 0.6,
             'escape_lateral_distance': 0.8,
-            'max_pinn_calls_per_generation': 3,
+            'max_pinn_calls_per_generation': 10,
             
         }
         
@@ -387,23 +390,23 @@ class CompletePathOptimizer(Node):
             if self.debug_mode:
                 self.get_logger().debug("PINN disabled or client not available")
             return None
-        
+
         # Wait for PINN to be ready
         if not self.pinn_ready_event.wait(timeout=0.1):
             if self.debug_mode:
                 self.get_logger().debug("PINN not ready yet")
             return None
-        
+
         # Initialize attributes if they don't exist
         if not hasattr(self, 'pinn_call_count'):
             self.pinn_call_count = 0
             self.pinn_timeout_count = 0
             self.pinn_success_count = 0
             self.pinn_response_times = deque(maxlen=100)
-        
+
         self.pinn_call_count += 1
         call_id = self.pinn_call_count
-        
+
         try:
             # Prepare request
             request = PINN_SERVICE_TYPE.Request()
@@ -470,47 +473,47 @@ class CompletePathOptimizer(Node):
                 )
 
             start_time = time.time()
-            
-            # Call service with timeout
             future = self.pinn_client.call_async(request)
             timeout_sec = self.pinn_call_timeout
-            
-            # Wait for response
-            wait_start = time.time()
-            while not future.done():
-                if time.time() - wait_start > timeout_sec:
-                    if self.debug_mode:
-                        self.get_logger().debug(f"PINN call #{call_id} timeout after {timeout_sec}s")
-                    self.pinn_timeout_count += 1
-                    future.cancel()
-                    return {
-                        'energy': 0.0,
-                        'stability': 0.0,
-                        'response_time': timeout_sec,
-                        'success': False,
-                        'timeout': True
-                    }
-                
-                # Process callbacks
-                rclpy.spin_once(self, timeout_sec=0.01)
-            
-            # Get response
-            response = future.result()
+
+            # Wait for response using future.result(timeout) – no spin_once
+            try:
+                response = future.result(timeout=timeout_sec)
+            except TimeoutError:
+                if self.debug_mode:
+                    self.get_logger().debug(f"PINN call #{call_id} timeout after {timeout_sec}s")
+                self.pinn_timeout_count += 1
+                future.cancel()
+                return {
+                    'energy': 0.0,
+                    'stability': 0.0,
+                    'response_time': timeout_sec,
+                    'success': False,
+                    'timeout': True
+                }
+            except Exception as e:
+                if self.debug_mode:
+                    self.get_logger().debug(f"PINN call #{call_id} failed: {e}")
+                return {
+                    'energy': 0.0,
+                    'stability': 0.0,
+                    'response_time': 0.0,
+                    'success': False,
+                    'timeout': False
+                }
+
             response_time = time.time() - start_time
-            
+
             if response is not None:
                 self.pinn_success_count += 1
                 self.pinn_response_times.append(response_time)
-                
-                # CRITICAL: Log the PINN service output like you want to see
+
                 energy = float(response.energy)
                 stability = float(response.stability)
-                
-                # Calculate average response time
+
                 avg_time = np.mean(self.pinn_response_times) if self.pinn_response_times else 0.0
                 success_rate = (self.pinn_success_count / self.pinn_call_count * 100) if self.pinn_call_count > 0 else 0
-                
-                # Log in the format you want to see
+
                 self.get_logger().info(
                     f"PINN Service: Request #{call_id}, "
                     f"Energy={energy:.2f}J, "
@@ -519,7 +522,7 @@ class CompletePathOptimizer(Node):
                     f"Avg: {avg_time:.3f}s, "
                     f"Success: {success_rate:.1f}%"
                 )
-                
+
                 return {
                     'energy': energy,
                     'stability': stability,
@@ -537,7 +540,7 @@ class CompletePathOptimizer(Node):
                     'success': False,
                     'timeout': False
                 }
-                
+
         except Exception as e:
             if self.debug_mode:
                 self.get_logger().debug(f"PINN call #{call_id} failed: {e}")
@@ -1732,7 +1735,7 @@ class CompletePathOptimizer(Node):
                 obstacle_cost = self.get_enhanced_obstacle_cost(path_array)
                 free_space_bonus = self.get_free_space_bonus(path_array)
 
-                if obstacle_cost > self.obstacle_penalty_weight * 15:
+                if obstacle_cost > self.obstacle_penalty_weight * 10:
                     continue
 
                 path_length = self.calculate_path_length(path_array)
@@ -1744,14 +1747,12 @@ class CompletePathOptimizer(Node):
                 use_pinn_for_this = False
                 if (self.use_pinn and self.pinn_service_available and
                         obstacle_cost < self.obstacle_penalty_weight * 15 and
-                        pinn_calls_this_gen < self.max_pinn_calls_per_generation and
-                        remaining > self.pinn_call_timeout and   # <-- RELAXED: no extra buffer
-                        random.random() < 0.8):
+                        pinn_calls_this_gen < self.max_pinn_calls_per_generation):
                     use_pinn_for_this = True
 
                 objectives = self.objective_evaluator.evaluate_all_objectives_with_timeout(
                     path_array,
-                    obstacle_cost - free_space_bonus,
+                    obstacle_cost,
                     uncertainty_cost,
                     straight_line_length,
                     use_pinn=use_pinn_for_this,
@@ -1862,14 +1863,17 @@ class CompletePathOptimizer(Node):
             )
 
         # Select best individual (same as before)
+                # Select best individual using weighted sum of all objectives
+        # Select best individual using weighted sum of all objectives
         if evaluated_individuals:
             best_idx = 0
             best_score = float('inf')
+            # weights for objectives (match order from evaluate_all_objectives)
+            # [length, curvature, obstacle_cost, uncertainty, deviation, pinn_energy, 1-stability]
+            weights = [0.1, 0.1, 0.4, 0.1, 0.1, 0.1, 0.1]   # obstacle weight increased
             for i, ind in enumerate(evaluated_individuals):
-                arr = np.array([[p[0], p[1]] for p in ind])
-                obs = self.get_enhanced_obstacle_cost(arr)
-                length = self.calculate_path_length(arr)
-                score = length + 2.5 * obs
+                obj = evaluated_objectives[i]
+                score = sum(w * obj[j] for j, w in enumerate(weights))
                 if score < best_score:
                     best_score = score
                     best_idx = i
@@ -1880,7 +1884,6 @@ class CompletePathOptimizer(Node):
             best_path = seed_path_corrected
         else:
             best_path = self.generate_quick_response_path(start_x, start_y, goal_x, goal_y)
-
         # Curvature validation (unchanged)
         if requires_turn and seed_path_corrected is not None:
             required_angle_deg = 0.0
@@ -1960,42 +1963,132 @@ class CompletePathOptimizer(Node):
         
         return total_cost
     
+    def generate_obstacle_avoiding_path(self, start_x, start_y, goal_x, goal_y):
+        """
+        Generate an initial path that explicitly avoids obstacles detected in the costmap.
+        Returns a list of (x, y) waypoints (at least 3) that go around the obstacle.
+        """
+        # If no costmap yet, fallback to straight line
+        if self.obstacle_grid is None or self.obstacle_grid_origin is None:
+            return self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
+
+        # Compute direction and distance
+        dx = goal_x - start_x
+        dy = goal_y - start_y
+        distance = math.hypot(dx, dy)
+        if distance < 0.5:
+            return [(start_x, start_y), (goal_x, goal_y)]
+
+        # Normalised direction vector
+        if distance > 0:
+            ux = dx / distance
+            uy = dy / distance
+        else:
+            ux, uy = 1.0, 0.0
+
+        # Perpendicular vectors (left and right)
+        left_x = -uy
+        left_y = ux
+        right_x = uy
+        right_y = -ux
+
+        # Number of samples along the straight line
+        num_samples = max(10, int(distance / 0.2))
+        samples = []
+        for i in range(1, num_samples):
+            t = i / num_samples
+            x = start_x + t * dx
+            y = start_y + t * dy
+            clearance = self.get_clearance_at_point(x, y)
+            samples.append((x, y, t, clearance))
+
+        # Find the point with minimum clearance (most obstructed)
+        min_clearance = float('inf')
+        worst_idx = -1
+        for idx, (x, y, t, clr) in enumerate(samples):
+            if clr < min_clearance:
+                min_clearance = clr
+                worst_idx = idx
+
+        # If the entire line is clear enough, return straight line
+        if min_clearance > self.preferred_clearance:
+            return self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
+
+        # The worst point is where we need to deviate
+        wx, wy, wt, _ = samples[worst_idx]
+
+        # Search for a safe offset (left and right) at that point
+        shift_distance = self.robot_radius * 2 + 0.3   # ~0.9 m
+        search_steps = 5
+        best_offset = None
+        best_clearance = 0.0
+        best_is_left = None
+
+        # Try left
+        for step in range(1, search_steps + 1):
+            cand_x = wx + left_x * shift_distance * step / search_steps
+            cand_y = wy + left_y * shift_distance * step / search_steps
+            cand_clearance = self.get_clearance_at_point(cand_x, cand_y)
+            if cand_clearance > best_clearance:
+                best_clearance = cand_clearance
+                best_offset = (cand_x, cand_y)
+                best_is_left = True
+
+        # Try right
+        for step in range(1, search_steps + 1):
+            cand_x = wx + right_x * shift_distance * step / search_steps
+            cand_y = wy + right_y * shift_distance * step / search_steps
+            cand_clearance = self.get_clearance_at_point(cand_x, cand_y)
+            if cand_clearance > best_clearance:
+                best_clearance = cand_clearance
+                best_offset = (cand_x, cand_y)
+                best_is_left = False
+
+        if best_offset is None:
+            # No safe deviation found – fallback to straight line
+            return self.generate_straight_path_with_waypoints(start_x, start_y, goal_x, goal_y)
+
+        dev_x, dev_y = best_offset
+
+        # Create a path with three waypoints: start -> deviation -> goal
+        # (Later interpolation will add intermediate points)
+        path = [
+            (start_x, start_y),
+            (dev_x, dev_y),
+            (goal_x, goal_y)
+        ]
+
+        return path
+    
     def initialize_enhanced_population(self, start_x, start_y, goal_x, goal_y, pop_size):
-        """Initialize enhanced population"""
         population = []
         n = max(self.waypoint_count, 2)
 
-        # Always include a straight line path with full waypoint_count waypoints
+        # Always include a straight line path
         straight_path = [
-            (start_x + i / (n - 1) * (goal_x - start_x),
-             start_y + i / (n - 1) * (goal_y - start_y))
+            (start_x + i/(n-1)*(goal_x-start_x),
+             start_y + i/(n-1)*(goal_y-start_y))
             for i in range(n)
         ]
         population.append(straight_path)
 
-        # Check if path is mostly clear
+        # If obstacles are present, add an obstacle‑avoiding path
         distance = math.hypot(goal_x - start_x, goal_y - start_y)
-        is_clear_path = self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, min(distance, 3.0))
+        # Check if straight path is clear (quick check)
+        straight_clear = self.is_straight_path_clear(start_x, start_y, goal_x, goal_y, min(distance, 5.0))
+        if not straight_clear:
+            # Obstacles detected – add a path that tries to avoid them
+            avoid_path = self.generate_obstacle_avoiding_path(start_x, start_y, goal_x, goal_y)
+            if avoid_path:
+                population.append(avoid_path)
 
-        # Add more straight paths only if clear AND no significant turn is needed.
-        # When a turn is required the curved seed (injected by the caller) should
-        # dominate the initial population; extra straight-line copies would
-        # dilute it and push the optimizer back toward straight solutions.
-        requires_turn = self.requires_significant_turning(
-            start_x, start_y, goal_x, goal_y,
-            threshold_degrees=self.significant_turning_threshold_deg)
-        if is_clear_path and not requires_turn:
-            for i in range(min(3, pop_size - 1)):
-                population.append(straight_path)
-
+        # Add free space path (existing)
         free_space_path = self.generate_free_space_focused_path(start_x, start_y, goal_x, goal_y)
         if free_space_path:
             population.append(free_space_path)
 
         # Use generate_straight_path_with_waypoints instead of generate_quick_response_path
-        # so the population always has multi-waypoint paths. generate_quick_response_path
-        # returns only 2 points for short distances, which prevents PINN from extracting
-        # meaningful obstacle/roughness features from the path during optimization.
+        # so the population always has multi-waypoint paths.
         straight_candidate = self.generate_straight_path_with_waypoints(
             start_x, start_y, goal_x, goal_y
         )
@@ -2340,77 +2433,72 @@ class CompletePathOptimizer(Node):
         resolution = self.obstacle_grid_resolution
         grid_size = self.obstacle_grid_size
         half_size = (grid_size * resolution) / 2.0
+
         origin_x = ox - half_size
         origin_y = oy - half_size
 
-        # Debug: print max occupancy and origin
-        max_val = np.max(self.obstacle_grid)
-        self.get_logger().info(
-            f"Costmap origin: ({origin_x:.2f}, {origin_y:.2f}), max occupancy: {max_val:.2f}",
-            throttle_duration_sec=2.0
-        )
-
-        # ... rest unchanged
-
-        # Print current robot position and map origin
-        if self.robot_pose:
-            rx = self.robot_pose.pose.pose.position.x
-            ry = self.robot_pose.pose.pose.position.y
+        # Debug info (optional)
+        if self.debug_mode:
+            max_val = float(np.max(self.obstacle_grid))
             self.get_logger().info(
-                f"Map origin: ({origin_x:.2f}, {origin_y:.2f}) | "
-                f"Robot: ({rx:.2f}, {ry:.2f}) | "
-                f"Max grid value: {np.max(self.obstacle_grid):.3f}",
+                f"Costmap origin: ({origin_x:.2f}, {origin_y:.2f}), max occupancy: {max_val:.2f}",
                 throttle_duration_sec=2.0
             )
+            if self.robot_pose:
+                rx = self.robot_pose.pose.pose.position.x
+                ry = self.robot_pose.pose.pose.position.y
+                self.get_logger().info(
+                    f"Map origin: ({origin_x:.2f}, {origin_y:.2f}) | "
+                    f"Robot: ({rx:.2f}, {ry:.2f}) | "
+                    f"Max grid value: {max_val:.3f}",
+                    throttle_duration_sec=2.0
+                )
 
         grid_msg = OccupancyGrid()
         grid_msg.header.stamp = self.get_clock().now().to_msg()
         grid_msg.header.frame_id = 'odom'
-        grid_msg.info.resolution = resolution
-        grid_msg.info.width = grid_size
-        grid_msg.info.height = grid_size
-        grid_msg.info.origin.position.x = origin_x
-        grid_msg.info.origin.position.y = origin_y
+        grid_msg.info.resolution = float(resolution)
+        grid_msg.info.width = int(grid_size)
+        grid_msg.info.height = int(grid_size)
+        grid_msg.info.origin.position.x = float(origin_x)
+        grid_msg.info.origin.position.y = float(origin_y)
         grid_msg.info.origin.position.z = 0.0
         grid_msg.info.origin.orientation.w = 1.0
 
-        # Convert grid values to occupancy (0‑100)
-        grid_data = []
-        threshold = 0.1   # lower threshold to see obstacles better
-        for i in range(grid_size):
-            for j in range(grid_size):
-                val = self.obstacle_grid[i, j]
+        # Flatten correctly: index = x + y * width (x fastest)
+        threshold = 0.1
+        data = [0] * (grid_size * grid_size)
+
+        for gx in range(grid_size):          # x index
+            for gy in range(grid_size):      # y index
+                val = float(self.obstacle_grid[gx, gy])
                 if val > threshold:
                     occ = 100
                 elif val > 0.05:
-                    occ = int(val * 100)
+                    occ = int(max(0.0, min(1.0, val)) * 100.0)
                 else:
                     occ = 0
-                grid_data.append(occ)
+                idx = gx + gy * grid_size
+                data[idx] = occ
 
-        grid_msg.data = grid_data
+        grid_msg.data = data
         self.costmap_pub.publish(grid_msg)
     def update_obstacle_cells(self, x, y, range_val):
         """Update obstacle cells: mark a small area around the hit point."""
-        if self.obstacle_grid_origin is None:
+        if self.obstacle_grid_origin is None or self.obstacle_grid is None:
             return
 
-        ox, oy = self.obstacle_grid_origin
-        resolution = self.obstacle_grid_resolution
-        grid_size = self.obstacle_grid_size
+        gx, gy = self.world_to_grid(x, y)
+        if gx is None or gy is None:
+            return
 
-        grid_x = int((x - ox) / resolution) + grid_size // 2
-        grid_y = int((y - oy) / resolution) + grid_size // 2
-
-        # Mark a 3x3 area (0.3 m) to account for beam width and uncertainty
-        radius_cells = 1  # 1 cell on each side = 3x3
+        radius_cells = 1   # 3x3 area
         for dx in range(-radius_cells, radius_cells + 1):
             for dy in range(-radius_cells, radius_cells + 1):
-                gx = grid_x + dx
-                gy = grid_y + dy
-                if 0 <= gx < grid_size and 0 <= gy < grid_size:
-                    # Set a high occupancy value (0.9)
-                    self.obstacle_grid[gx, gy] = 0.9
+                nx = gx + dx
+                ny = gy + dy
+                if 0 <= nx < self.obstacle_grid_size and 0 <= ny < self.obstacle_grid_size:
+                    self.obstacle_grid[nx, ny] = 0.9
     def update_obstacle_map(self):
         """Update obstacle map by transforming laser points to odom using TF."""
         if self.robot_pose is None or self.laser_scan is None or self.laser_frame is None:
@@ -2431,7 +2519,7 @@ class CompletePathOptimizer(Node):
             return
 
         # Decay previous obstacles (slower decay)
-        self.obstacle_grid *= 0.95   # was 0.8
+        self.obstacle_grid *= 0.8   # was 0.8
         for i, range_val in enumerate(self.laser_scan):
             if 0.1 < range_val < 10.0:
                 angle = self.scan_angles[i]
@@ -2487,16 +2575,20 @@ class CompletePathOptimizer(Node):
         return min_distance if min_distance != float('inf') else 2.0
     
     def world_to_grid(self, x, y):
-        """World to grid"""
+        """Convert world (odom) coordinates to grid indices (gx, gy)."""
         if self.obstacle_grid_origin is None:
             return None, None
-        
-        ox, oy = self.obstacle_grid_origin
-        grid_x = int((x - ox) / self.obstacle_grid_resolution) + self.obstacle_grid_size // 2
-        grid_y = int((y - oy) / self.obstacle_grid_resolution) + self.obstacle_grid_size // 2
-        
-        if 0 <= grid_x < self.obstacle_grid_size and 0 <= grid_y < self.obstacle_grid_size:
-            return grid_x, grid_y
+
+        cx, cy = self.obstacle_grid_origin          # grid center in world
+        res = self.obstacle_grid_resolution
+        size = self.obstacle_grid_size
+        half = size // 2
+
+        gx = int((x - cx) / res) + half
+        gy = int((y - cy) / res) + half
+
+        if 0 <= gx < size and 0 <= gy < size:
+            return gx, gy
         return None, None
     
     def calculate_path_length(self, path_array):
