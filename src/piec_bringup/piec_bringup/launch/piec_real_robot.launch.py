@@ -262,7 +262,7 @@ def generate_launch_description():
             "odom_topic": "/ukf/odom",
             "scan_topic": "/scan",          # Use processed scan
             "use_sim_time": use_sim_time,
-            "use_dwa": False,                          # Same as simulation
+            "use_dwa": True,                          # Same as simulation
             "use_pinn_in_controller": False,
             "heading_kp": 1.5,
             "heading_deadband_deg": 2.0,
