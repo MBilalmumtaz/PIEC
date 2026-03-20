@@ -245,7 +245,7 @@ class ControllerNode(Node):
 
         self.get_logger().info("🚀 Enhanced PIEC Controller READY with Improved Free Space Navigation")
         self.get_logger().info(f"Stuck detection: {self.stuck_threshold_distance}m movement in {self.stuck_threshold_time}s")
-
+        self.get_logger().info("🛑 Emergency Stop node started, output to /cmd_vel")
     def load_parameters_from_yaml(self):
         """Load parameters from YAML configuration file"""
         config_path = os.path.join(
@@ -264,11 +264,12 @@ class ControllerNode(Node):
             'deceleration_limit': 1.2,
 
             # Safety Parameters
-            'emergency_stop_distance': 0.2,
-            'slow_down_distance': 0.6,  # Increased
-            'safe_distance': 0.8,  # Increased
+            'emergency_stop_distance': 0.60,
+            'slow_down_distance': 0.90,  # Increased
+            'safe_distance': 1.50,  # Increased
             'obstacle_clearance': 0.5,  # Increased
-            'lateral_safety_margin': 0.4,  # Increased
+#we can use the equations (L+W)/2pir
+            'lateral_safety_margin': 0.4,  # Increased change
 
             # Path Following
             'waypoint_tolerance': 0.3,  # Increased
@@ -335,7 +336,7 @@ class ControllerNode(Node):
             'free_space_update_rate': 3.0,  # Hz
             'prefer_free_space_turns': True,
             'use_pinn_in_controller': False,
-            'scan_topic': '/scan_fixed',
+            'scan_topic': '/scan',
             'path_topic': '/piec/path',
 
             # Reactive speed scaling parameters
@@ -1406,56 +1407,48 @@ class ControllerNode(Node):
             self.path_received = False
             return
 
-        # ------------------------------------------------------------------
-        # DWA OBSTACLE AVOIDANCE WITH FREE SPACE AWARENESS
+         # ------------------------------------------------------------------
+        # DWA OBSTACLE AVOIDANCE (ALWAYS ACTIVE)
         # ------------------------------------------------------------------
         if self.use_dwa and not self.goal_reached and self.path is not None:
-            # Check if obstacles are present
-            obstacle_nearby = self.obstacle_detected and self.obstacle_distance < self.safe_distance
-            
-            # Use DWA when obstacles are nearby
-            if obstacle_nearby:
-                try:
-                    current_pose = (x, y, yaw)
-                    v, w = self.dwa.plan(
-                        current_pose, 
-                        self.path, 
-                        self.scan_ranges, 
-                        self.scan_angles
-                    )
+            try:
+                current_pose = (x, y, yaw)
+                v, w = self.dwa.plan(
+                    current_pose, 
+                    self.path, 
+                    self.scan_ranges, 
+                    self.scan_angles
+                )
+                
+                if self.debug_mode and self.control_counter % 40 == 0:
+                    self.get_logger().info(f"🤖 DWA ACTIVE: v={v:.3f}, w={w:.3f}")
+                
+                v = np.clip(v, 0.0, self.max_linear_vel * 0.8)
+                w = np.clip(w, -self.max_angular_vel * 0.8, self.max_angular_vel * 0.8)
+                
+                if v > 0 and v < self.min_linear_vel:
+                    v = self.min_linear_vel
                     
-                    if self.debug_mode and self.control_counter % 40 == 0:
-                        self.get_logger().info(f"🤖 DWA ACTIVE: v={v:.3f}, w={w:.3f}")
-                    
-                    # Apply limits
-                    v = np.clip(v, 0.0, self.max_linear_vel * 0.8)
-                    w = np.clip(w, -self.max_angular_vel * 0.8, self.max_angular_vel * 0.8)
-                    
-                    if v > 0 and v < self.min_linear_vel:
-                        v = self.min_linear_vel
-                        
-                    v, w = self.apply_motion_limits(v, w)
-                    
-                    # Apply PINN optimization if available
-                    if self.pinn_client is not None:
-                        v, w = self.optimize_speed_with_pinn(v, w, distance_to_goal)
+                v, w = self.apply_motion_limits(v, w)
+                
+                if self.pinn_client is not None:
+                    v, w = self.optimize_speed_with_pinn(v, w, distance_to_goal)
 
-                    # Reactive speed scaling: zone-based v scaling, w preserved
-                    v, w = self.apply_reactive_speed_scaling(v, w)
+                v, w = self.apply_reactive_speed_scaling(v, w)
 
-                    self.update_statistics(v)
-                    self.publish_cmd(float(v), float(w))
-                    
-                    return
-                    
-                except Exception as e:
+                self.update_statistics(v)
+                self.publish_cmd(float(v), float(w))
+                
+                return
+                
+            except Exception as e:
+                if self.debug_mode:
+                    self.get_logger().warn(f"DWA planning failed: {e}")
+                self.dwa_failures += 1
+                if self.dwa_failures > self.max_dwa_failures:
+                    self.use_dwa = False
                     if self.debug_mode:
-                        self.get_logger().warn(f"DWA planning failed: {e}")
-                    self.dwa_failures += 1
-                    if self.dwa_failures > self.max_dwa_failures:
-                        self.use_dwa = False
-                        if self.debug_mode:
-                            self.get_logger().warn("Disabling DWA after too many failures")
+                        self.get_logger().warn("Disabling DWA after too many failures")
 
         # ------------------------------------------------------------------
         # SIMPLE CONTROL WITH FREE SPACE OPTIMIZATION AND PINN
@@ -1558,45 +1551,14 @@ class ControllerNode(Node):
         dy = target_y - current_y
         distance = math.hypot(dx, dy)
         
-        # Calculate bearing to target (always in [-pi, pi])
+        # Calculate bearing to target
         target_angle = math.atan2(dy, dx)
         
-        # Calculate angle error with proper wrapping to [-pi, pi]
+        # Calculate angle error with proper wrapping
         angle_diff = target_angle - current_yaw
         angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
         
-        # CRITICAL FIRST CHECK: Absolute path straightness (not robot orientation)
-        # Check if the PATH ITSELF is straight (goal relative to start)
-        if self.path and len(self.path.poses) >= 2:
-            goal_pose = self.path.poses[-1].pose.position
-            start_pose = self.path.poses[0].pose.position
-            path_dx = goal_pose.x - start_pose.x
-            path_dy = goal_pose.y - start_pose.y
-            
-            # If path is straight (dy < 3cm for every 1m of dx)
-            if abs(path_dx) > 0.2 and abs(path_dy) / abs(path_dx) < 0.03:
-                v = min(self.max_linear_vel * 0.7, distance * 0.5)
-                w = 0.0
-                if self.debug_mode:
-                    self.get_logger().info(
-                        f"🎯 PATH is straight: dx={path_dx:.3f}, dy={path_dy:.3f}, "
-                        f"ratio={abs(path_dy)/abs(path_dx):.4f} - FORCING w=0"
-                    )
-                self.is_rotating_in_place = False  # Not rotating
-                return v, w
-        
-        # SECOND CHECK: Robot-to-target straightness
-        if abs(dy) < 0.03 and abs(dx) > 0.2:  # Stricter: 3cm not 5cm
-            v = min(self.max_linear_vel * 0.7, distance * 0.5)
-            w = 0.0
-            if self.debug_mode:
-                self.get_logger().info(
-                    f"🎯 Robot-to-target straight: dx={dx:.3f}, dy={dy:.3f} - w=0"
-                )
-            self.is_rotating_in_place = False  # Not rotating
-            return v, w
-        
-        # THIRD CHECK: Small angle error using deadband parameter
+        # Small angle error: use deadband
         heading_deadband_rad = math.radians(self.heading_deadband_deg)
         if abs(angle_diff) < heading_deadband_rad:
             v = min(self.max_linear_vel * 0.7, distance * 0.5)
@@ -1605,42 +1567,33 @@ class ControllerNode(Node):
                 self.get_logger().info(
                     f"📐 Angle error within deadband ({math.degrees(angle_diff):.2f}°) - w=0"
                 )
-            self.is_rotating_in_place = False  # Not rotating
+            self.is_rotating_in_place = False
             return v, w
         
-        # Calculate angular velocity using heading_kp parameter
-        # Positive angle_diff means target is to the left -> turn left (positive w = CCW)
-        # Negative angle_diff means target is to the right -> turn right (negative w = CW)
         rotate_threshold_rad = math.radians(self.rotate_in_place_angle_deg)
         
-        # FIX: For close-range goals (< close_range_distance), use proportional control instead of rotate-then-move
         if distance < self.close_range_distance:
-            # Close to goal - use gentle proportional control with FULL angular control
-            # Note: Previous 0.7 multiplier was preventing effective turning in close-range scenarios
-            v = min(self.max_linear_vel * 0.4, distance * 0.5)  # Slower linear
-            w = angle_diff * self.heading_kp  # FULL angular control, no reduction
+            # Close to goal: proportional control
+            v = min(self.max_linear_vel * 0.4, distance * 0.5)
+            w = angle_diff * self.heading_kp
             w = np.clip(w, -self.max_heading_rate, self.max_heading_rate)
-            
-            # Reset rotation timeout when moving forward
             if abs(v) > 0.05:
                 self.rotation_start_time = None
-            
             if self.debug_mode:
                 self.get_logger().info(
                     f"🎯 Close-range proportional: dist={distance:.2f}m, angle={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
-            self.is_rotating_in_place = False  # Not rotating in place
+            self.is_rotating_in_place = False
+            return v, w
         elif abs(angle_diff) > rotate_threshold_rad and \
                 not self.has_forward_clearance(self.rotate_free_space_threshold):
-            # Large angle error AND forward clearance is insufficient - rotate in place
-            # Check rotation timeout to prevent infinite spinning
+            # Rotate in place if forward blocked and large angle error
             current_time = time.monotonic()
             if self.rotation_start_time is None:
                 self.rotation_start_time = current_time
-            
             rotation_duration = current_time - self.rotation_start_time
             if rotation_duration > self.rotation_timeout:
-                # Timeout exceeded - force forward movement to break deadlock
+                # Timeout: force forward motion
                 if self.debug_mode:
                     self.get_logger().warn(
                         f"⚠️ Rotation timeout ({rotation_duration:.1f}s) exceeded! Forcing forward movement."
@@ -1648,74 +1601,51 @@ class ControllerNode(Node):
                 v = min(self.max_linear_vel * 0.4, distance * 0.5)
                 w = angle_diff * self.heading_kp * 0.5
                 w = np.clip(w, -self.max_heading_rate * 0.5, self.max_heading_rate * 0.5)
-                self.rotation_start_time = None  # Reset timeout
-                self.is_rotating_in_place = False  # Not rotating in place
+                self.rotation_start_time = None
+                self.is_rotating_in_place = False
             else:
-                # BUG FIX: Explicitly set v=0.0 when rotating in place
                 v = 0.0
-                
-                # Anti-oscillation: Lock rotation direction for stability
                 current_direction = np.sign(angle_diff)
-                current_time = time.monotonic()
-                
-                # If we have a locked direction and it's recent, maintain it
-                # This prevents rapid direction switching
+                # Anti‑oscillation lock
                 if (self.rotation_direction_lock_time is not None and 
                     current_time - self.rotation_direction_lock_time < self.rotation_direction_lock_duration and
                     self.last_rotation_direction is not None):
-                    # Maintain locked direction unless angle error is very small
                     min_angle_for_lock_rad = math.radians(self.rotation_min_angle_for_lock_deg)
                     if abs(angle_diff) > min_angle_for_lock_rad:
                         w = self.last_rotation_direction * self.max_heading_rate
                     else:
-                        # Small error - allow direction change
                         w = current_direction * self.max_heading_rate
                         self.last_rotation_direction = current_direction
                         self.rotation_direction_lock_time = current_time
                 else:
-                    # Set new direction
                     w = current_direction * self.max_heading_rate
                     self.last_rotation_direction = current_direction
                     self.rotation_direction_lock_time = current_time
-                
                 if self.debug_mode:
                     self.get_logger().info(
                         f"🔄 Rotating in place: angle_error={math.degrees(angle_diff):.1f}°, w={w:.3f}, duration={rotation_duration:.1f}s"
                     )
-                self.is_rotating_in_place = True  # Flag for rotate-in-place mode
+                self.is_rotating_in_place = True
+            return v, w
         else:
-            # Reset rotation timeout when not rotating in place
+            # Forward with turning
             self.rotation_start_time = None
-            
-            # Move forward with turning - use combined motion
-            # Scale forward velocity based on alignment
             alignment_factor = max(0.3, 1.0 - abs(angle_diff) / rotate_threshold_rad)
-            
-            # Calculate base velocity based on distance
             if distance > 2.0:
                 v = min(self.max_linear_vel, distance * 0.4)
             elif distance > 0.5:
                 v = min(self.max_linear_vel * 0.8, distance * 0.7)
             else:
                 v = min(self.max_linear_vel * 0.6, distance * 1.0)
-            
-            # Apply alignment factor
             v *= alignment_factor
-            
-            # Calculate angular velocity using heading_kp
             w = angle_diff * self.heading_kp
-            
-            # Cap to max_heading_rate (using 0.8 factor to allow some headroom)
             w = np.clip(w, -self.max_heading_rate * 0.8, self.max_heading_rate * 0.8)
-            
             if self.debug_mode:
                 self.get_logger().info(
                     f"🚗 Forward+turn: angle_error={math.degrees(angle_diff):.1f}°, v={v:.3f}, w={w:.3f}"
                 )
-            self.is_rotating_in_place = False  # Not rotating in place
-        
-        # Return raw velocities - scaling and sign correction applied in publish_cmd()
-        return v, w
+            self.is_rotating_in_place = False
+            return v, w
 
     def get_current_clearance(self):
         """Get minimum clearance around robot"""
@@ -1974,23 +1904,30 @@ class ControllerNode(Node):
 
         if len(self.speed_history) > 0:
             self.avg_speed = sum(self.speed_history) / len(self.speed_history)
+    def get_forward_obstacle_distance(self):
+        """
+        Compute the minimum distance to obstacles directly in front of the robot
+        within a 60° forward cone (±30°). Returns the closest distance, or inf if none.
+        """
+        if not self.scan_ranges or not self.scan_angles:
+            return float('inf')
+        forward_ranges = []
+        for r, a in zip(self.scan_ranges, self.scan_angles):
+            if abs(a) < math.radians(30):   # 60° forward cone
+                if 0.1 < r < 50.0:
+                    forward_ranges.append(r)
+        return min(forward_ranges) if forward_ranges else float('inf')
 
     def apply_reactive_speed_scaling(self, v, w):
-        """Scale linear speed reactively based on obstacle proximity zones.
-
-        Zones (configurable via parameters):
-          - Risk zone   (< reactive_risk_zone_dist):  v=0, keep w to allow turning away.
-          - Safety zone (risk_dist to safety_dist):   linearly scale v 0→1.
-          - Far zone    (> reactive_safety_zone_dist): no scaling.
-
-        Hysteresis prevents stop/start oscillation at zone boundaries.
-        Closing-velocity awareness increases slowdown when obstacle is approaching.
-        Angular velocity is preserved in all zones so the robot can turn away.
+        """
+        Scale linear speed reactively based on obstacles in the forward direction.
+        Side obstacles do not reduce forward speed – they only affect turning (handled elsewhere).
         """
         if not self.scan_ranges:
             return v, w
 
-        dist = self.obstacle_distance
+        # Use forward distance instead of global minimum distance
+        dist = self.get_forward_obstacle_distance()
 
         # Track approach velocity (positive = obstacle moving away, negative = closing)
         closing_vel = 0.0
@@ -2035,7 +1972,7 @@ class ControllerNode(Node):
             scaled_v = 0.0 if v > 0.0 else v
             if self.debug_mode and self.control_counter % 40 == 0:
                 self.get_logger().info(
-                    f"🛑 REACTIVE RISK ZONE ({dist:.2f}m): v→0, w={w:.3f} preserved"
+                    f"🛑 REACTIVE RISK ZONE (forward {dist:.2f}m): v→0, w={w:.3f} preserved"
                 )
             return scaled_v, w
 
@@ -2047,14 +1984,13 @@ class ControllerNode(Node):
             scaled_v = v * scale
             if self.debug_mode and self.control_counter % 40 == 0:
                 self.get_logger().info(
-                    f"⚠️ REACTIVE SAFETY ZONE ({dist:.2f}m): scale={scale:.2f}, "
+                    f"⚠️ REACTIVE SAFETY ZONE (forward {dist:.2f}m): scale={scale:.2f}, "
                     f"v={v:.3f}→{scaled_v:.3f}, w={w:.3f}"
                 )
             return scaled_v, w
 
         # Far zone: no scaling
         return v, w
-
     def publish_cmd(self, linear_vel, angular_vel):
         """Fixed publish command with calibration and motor health tracking"""
         msg = Twist()
