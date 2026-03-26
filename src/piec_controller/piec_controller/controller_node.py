@@ -1432,14 +1432,42 @@ class ControllerNode(Node):
                     self.scan_angles
                 )
                 
+                # --- Throttled diagnostic: goal distance & heading error ---
                 if self.debug_mode and self.control_counter % 40 == 0:
                     self.get_logger().info(f"🤖 DWA ACTIVE: v={v:.3f}, w={w:.3f}")
+                    if self.goal_position is not None:
+                        gx, gy = self.goal_position
+                        g_dist = math.hypot(gx - x, gy - y)
+                        g_dir = math.atan2(gy - y, gx - x)
+                        h_err = math.degrees(abs(math.atan2(
+                            math.sin(g_dir - yaw), math.cos(g_dir - yaw))))
+                        self.get_logger().info(
+                            f"   goal_dist={g_dist:.2f}m heading_err={h_err:.1f}° "
+                            f"yaw={math.degrees(yaw):.1f}°"
+                        )
                 
                 v = np.clip(v, 0.0, self.max_linear_vel * 0.8)
                 w = np.clip(w, -self.max_angular_vel * 0.8, self.max_angular_vel * 0.8)
                 
+                # Apply min_linear_vel ONLY when angular command is small.
+                # When |w| is large the robot is turning sharply; forcing min forward
+                # speed at the same time produces the "circular motion" failure mode.
+                # Threshold: if angular rate exceeds this, skip the min-vel clamp.
+                _angular_threshold_for_min_vel = 0.25  # rad/s
                 if v > 0 and v < self.min_linear_vel:
-                    v = self.min_linear_vel
+                    if abs(w) < _angular_threshold_for_min_vel:
+                        v = self.min_linear_vel
+                        if self.debug_mode and self.control_counter % 40 == 0:
+                            self.get_logger().info(
+                                f"🔒 DWA v clamped to min_linear_vel={self.min_linear_vel:.3f} "
+                                f"(|w|={abs(w):.3f} < {_angular_threshold_for_min_vel})"
+                            )
+                    else:
+                        if self.debug_mode and self.control_counter % 40 == 0:
+                            self.get_logger().info(
+                                f"🔄 DWA min_linear_vel clamp skipped (|w|={abs(w):.3f} "
+                                f">= {_angular_threshold_for_min_vel}, preventing circular motion)"
+                            )
                     
                 v, w = self.apply_motion_limits(v, w)
                 
