@@ -6,6 +6,10 @@ from geometry_msgs.msg import Twist
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSDurabilityPolicy, HistoryPolicy
 import numpy as np
 
+# Distance reported when the forward scan sector is entirely empty/invalid
+# (sensor blind-spot).  Treat this as "obstacle very close" so the robot stops.
+_BLIND_SPOT_DISTANCE = 0.5  # metres
+
 class EmergencyStop(Node):
     def __init__(self):
         super().__init__('emergency_stop')
@@ -94,7 +98,7 @@ class EmergencyStop(Node):
         if not valid_ranges:
             # No valid readings in forward sector – sensor blind-spot or all readings
             # below range_min; treat conservatively as an obstacle very close.
-            self.min_obstacle_distance = msg.range_min if msg.range_min > 0.0 else 0.5
+            self.min_obstacle_distance = msg.range_min if msg.range_min > 0.0 else _BLIND_SPOT_DISTANCE
         else:
             self.min_obstacle_distance = float(np.min(valid_ranges))
         

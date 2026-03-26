@@ -62,7 +62,7 @@ class DynamicDWAComplete:
         self.fallback_rotation_start_time = None
         self.max_rotation_time = MAX_ROTATION_TIME
         
-        # Braking model for real-robot safety
+        # Braking model constants (used in check_trajectory safety margin computation)
         self.brake_decel = 0.6   # m/s² conservative deceleration
         self.cmd_latency = 0.2   # s command-to-wheel latency margin
 
@@ -253,10 +253,26 @@ class DynamicDWAComplete:
         return trajectory
 
     def check_trajectory(self, trajectory, scan_ranges, scan_angles, robot_theta):
-        """Check if trajectory is collision-free with conservative checking"""
+        """Check if trajectory is collision-free with conservative checking.
+
+        Safety margin = robot_radius + 0.10 m base + braking distance for the
+        maximum speed commanded (approximated from trajectory arc length / time).
+        """
         if not trajectory:
             return False
-        
+
+        # Estimate speed from arc length of trajectory
+        arc_len = sum(
+            math.hypot(trajectory[i][0] - trajectory[i-1][0],
+                       trajectory[i][1] - trajectory[i-1][1])
+            for i in range(1, len(trajectory))
+        )
+        est_speed = arc_len / max(self.sim_time, 1e-6)
+
+        # Braking distance: v²/(2·a) + v·latency
+        braking_dist = (est_speed ** 2) / (2.0 * self.brake_decel) + est_speed * self.cmd_latency
+        safety_margin = max(0.15, braking_dist + 0.10)  # at least 0.15 m base
+
         # Check multiple points along trajectory (skip index 0 – robot centre)
         step = max(1, len(trajectory) // 8)
         for idx in range(1, len(trajectory), step):
@@ -272,10 +288,8 @@ class DynamicDWAComplete:
             dist = math.hypot(local_x, local_y)
             angle = math.atan2(local_y, local_x)
 
-            # Speed at this waypoint (approximated as constant) for braking margin
-            # trajectory[0] speed ≈ v, but we don't have it here; use the arc length / time
-            # as a proxy.  A conservative fixed extra margin handles this.
-            if not self.check_collision(dist, angle, scan_ranges, scan_angles, safety_margin=0.25):
+            if not self.check_collision(dist, angle, scan_ranges, scan_angles,
+                                        safety_margin=safety_margin):
                 return False
         
         return True
