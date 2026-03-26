@@ -246,8 +246,8 @@ def generate_launch_description():
             "max_linear_vel": 0.8,
             "min_linear_vel": 0.15,
             "max_angular_vel": 0.6,
-            "emergency_stop_distance": 0.62,
-            "slow_down_distance": 0.92,
+            "emergency_stop_distance": 0.9,
+            "slow_down_distance": 1.2,
             "safe_distance": 1.5,
             "waypoint_tolerance": 0.4,
             "lookahead_distance": 1.2,
@@ -284,8 +284,8 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(enable_piecnodes),
         parameters=[{
-            "stop_distance": 0.62,  # Increased from 0.2
-            "slow_distance": 0.92,  # Increased from 0.4
+            "stop_distance": 0.9,  # Increased from 0.2
+            "slow_distance": 1.2,  # Increased from 0.4
             "enable_emergency_stop": True,
             "use_sim_time": use_sim_time,
             "scan_topic": "/scan",
