@@ -315,9 +315,9 @@ class UKFNode(Node):
         if is_rejected:
             self.rejection_count += 1
         
-        # Print stats every 10 seconds (regardless of rejection)
+        # Print stats every 10 seconds (only in debug mode to reduce log spam)
         current_time = self.get_clock().now()
-        if (current_time - self.last_stats_print).nanoseconds > 10e9:
+        if self.debug_mode and (current_time - self.last_stats_print).nanoseconds > 10e9:
             self.get_logger().info(
                 f"📊 UKF Stats: {self.rejection_count}/{self.measurement_count} rejected "
                 f"({rejection_rate*100:.1f}%), threshold={threshold:.1f}"

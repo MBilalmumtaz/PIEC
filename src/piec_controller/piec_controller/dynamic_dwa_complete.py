@@ -39,14 +39,19 @@ class DynamicDWAComplete:
         # goal     – proximity of trajectory end to goal/path
         # speed    – prefer moving over standing still
         # clearance– obstacle safety margin
-        # path     – lateral deviation from planned path
+        # path     – lateral deviation from planned path (forward waypoints only)
         # free_space – open-area preference
-        self.w_heading = 4.0        # NEW: heading alignment toward goal (key fix for wrong-direction drift)
-        self.w_goal = 2.0
-        self.w_speed = 0.7
-        self.w_clearance = 4.0
-        self.w_path = 6.0
-        self.w_free_space = 0.5
+        #
+        # TUNING NOTE: w_heading and w_goal are raised so goal-direction alignment
+        # dominates over raw path-proximity, preventing the "follows path but moves
+        # in wrong direction" failure mode that occurs when the path score (formerly
+        # 6.0) overwhelmed every other term.
+        self.w_heading = 5.0
+        self.w_goal = 4.0
+        self.w_speed = 0.5
+        self.w_clearance = 3.0
+        self.w_path = 3.0        # Reduced – forward-only path score now focuses this term
+        self.w_free_space = 0.3
         
         # Robot parameters
         self.robot_radius = 0.35
@@ -65,6 +70,12 @@ class DynamicDWAComplete:
         # Braking model constants (used in check_trajectory safety margin computation)
         self.brake_decel = 0.6   # m/s² conservative deceleration
         self.cmd_latency = 0.2   # s command-to-wheel latency margin
+
+        # Cached nearest-path-waypoint index from the previous planning cycle.
+        # We search forward from this cache instead of scanning the whole path
+        # from scratch every cycle, reducing the per-cycle cost to O(k) where k
+        # is the number of waypoints advanced since the last call.
+        self._cached_nearest_path_idx = 0
 
         self.node.get_logger().info("Dynamic DWA Complete initialized with Free Space Awareness")
 
@@ -117,6 +128,29 @@ class DynamicDWAComplete:
             # Minimum forward obstacle distance (for progress penalty gating)
             min_forward_dist = self._get_min_forward_dist(scan_ranges, scan_angles)
 
+            # Find nearest forward path waypoint index so calc_path_score rewards
+            # only waypoints ahead of the robot's current position on the path.
+            # We search forward from the cached index (not from 0) to keep the
+            # per-cycle cost to O(k) rather than O(n).
+            n_poses = len(path.poses)
+            search_start = min(self._cached_nearest_path_idx, max(0, n_poses - 1))
+            nearest_path_idx = search_start
+            nearest_path_dist = math.hypot(
+                path.poses[search_start].pose.position.x - x,
+                path.poses[search_start].pose.position.y - y
+            )
+            for _pi in range(search_start, n_poses):
+                _pd = math.hypot(path.poses[_pi].pose.position.x - x,
+                                 path.poses[_pi].pose.position.y - y)
+                if _pd < nearest_path_dist:
+                    nearest_path_dist = _pd
+                    nearest_path_idx = _pi
+                elif _pd > nearest_path_dist + 0.5:
+                    # Waypoints are getting further away – robot has passed the
+                    # nearest one, stop the search early.
+                    break
+            self._cached_nearest_path_idx = nearest_path_idx
+
             # Dynamic velocity limits based on obstacles
             dynamic_max_v, dynamic_max_w = self.calculate_dynamic_limits(scan_ranges, scan_angles, theta)
             
@@ -161,7 +195,7 @@ class DynamicDWAComplete:
                     goal_score = self.calc_goal_score(trajectory, path, dist_to_goal_start)
                     speed_score = self.calc_speed_score(v, w)
                     clearance_score = self.calc_clearance_score(trajectory, scan_ranges, scan_angles, theta)
-                    path_score = self.calc_path_score(trajectory, path)
+                    path_score = self.calc_path_score(trajectory, path, nearest_path_idx)
                     free_space_score = self.calc_free_space_score(
                         trajectory, scan_ranges, scan_angles, theta, goal_dir_world)
 
@@ -171,9 +205,11 @@ class DynamicDWAComplete:
                     # of making forward progress.
                     # Thresholds: v<0.05 m/s ≈ stationary; goal >1 m away; forward
                     # clearance >1 m (no imminent obstacle).
+                    # Penalty increased to -3.0 to overcome path-score bias for
+                    # trajectories that follow the path without making goal progress.
                     progress_penalty = 0.0
                     if v < 0.05 and dist_to_goal_start > 1.0 and min_forward_dist > 1.0:
-                        progress_penalty = -1.5
+                        progress_penalty = -3.0
 
                     # Weighted total score
                     total_score = (
@@ -597,22 +633,35 @@ class DynamicDWAComplete:
 
         return closest_range
 
-    def calc_path_score(self, trajectory, path):
-        """Calculate path following score"""
+    def calc_path_score(self, trajectory, path, nearest_path_idx=0):
+        """Calculate path following score – only forward waypoints are rewarded.
+
+        Scoring only path waypoints at or ahead of ``nearest_path_idx`` prevents
+        trajectories that move *backward* along the path (toward already-passed
+        waypoints) from receiving an inflated path score.  This is the key fix
+        for the "robot follows path in wrong direction" failure mode.
+        """
         if not trajectory or not path.poses:
             return 0.0
         
         total_score = 0.0
         count = 0
         
+        # Only consider path waypoints from nearest_path_idx onward (forward).
+        # If nearest_path_idx >= len(path.poses) the robot has reached the end
+        # of the path – return 0.0 so no trajectory is artificially rewarded.
+        if nearest_path_idx >= len(path.poses):
+            return 0.0
+        forward_poses = path.poses[nearest_path_idx:]
+        
         # Sample trajectory points
         traj_step = max(1, len(trajectory) // 5)
         for i in range(0, len(trajectory), traj_step):
             x, y, _ = trajectory[i]
             
-            # Find closest path point
+            # Find closest FORWARD path point
             min_dist = float('inf')
-            for pose in path.poses:
+            for pose in forward_poses:
                 px = pose.pose.position.x
                 py = pose.pose.position.y
                 dist = math.hypot(px - x, py - y)
