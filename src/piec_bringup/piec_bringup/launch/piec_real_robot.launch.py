@@ -284,8 +284,11 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(enable_piecnodes),
         parameters=[{
-            "stop_distance": 0.9,  # Increased from 0.2
-            "slow_distance": 1.2,  # Increased from 0.4
+            "stop_distance": 0.55,        # reduced from 0.9 – prevents false stops in corridors
+            "slow_distance": 0.90,
+            "hysteresis_margin": 0.12,    # clear only when dist > stop_dist + margin
+            "clear_count_threshold": 5,   # require 5 consecutive clear scans
+            "forward_cone_deg": 60.0,
             "enable_emergency_stop": True,
             "use_sim_time": use_sim_time,
             "scan_topic": "/scan",
