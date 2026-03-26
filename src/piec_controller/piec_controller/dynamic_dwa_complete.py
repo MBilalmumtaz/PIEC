@@ -68,6 +68,25 @@ class DynamicDWAComplete:
 
         self.node.get_logger().info("Dynamic DWA Complete initialized with Free Space Awareness")
 
+    def _get_min_forward_dist(self, scan_ranges, scan_angles, cone_half_angle=math.radians(45)):
+        """Return minimum valid scan range within a forward cone in robot frame.
+
+        Args:
+            scan_ranges: list of range values (metres)
+            scan_angles: list of beam angles in robot frame (radians, already in [-π, π])
+            cone_half_angle: half-width of the forward cone (default ±45°)
+        Returns:
+            Minimum range in the cone, or float('inf') if no valid readings exist.
+        """
+        if scan_ranges is None or scan_angles is None:
+            return float('inf')
+        min_dist = float('inf')
+        for r, a in zip(scan_ranges, scan_angles):
+            if abs(a) < cone_half_angle:
+                if math.isfinite(r) and 0.1 < r < min_dist:
+                    min_dist = r
+        return min_dist
+
     def plan(self, current_pose, path, scan_ranges, scan_angles):
         """Main planning function with frame-correct heading and progress scoring"""
         if path is None or len(path.poses) == 0:
@@ -86,12 +105,30 @@ class DynamicDWAComplete:
             # Goal direction in world frame – used for heading scoring
             goal_dir_world = math.atan2(goal_y - y, goal_x - x)
 
+            # Heading error from current robot orientation to goal direction
+            heading_error_to_goal = abs(math.atan2(
+                math.sin(goal_dir_world - theta),
+                math.cos(goal_dir_world - theta)
+            ))
+
+            # Distance to goal at trajectory START (for progress guardrail)
+            dist_to_goal_start = math.hypot(goal_x - x, goal_y - y)
+
+            # Minimum forward obstacle distance (for progress penalty gating)
+            min_forward_dist = self._get_min_forward_dist(scan_ranges, scan_angles)
+
             # Dynamic velocity limits based on obstacles
             dynamic_max_v, dynamic_max_w = self.calculate_dynamic_limits(scan_ranges, scan_angles, theta)
             
-            # Generate velocity candidates – always include full w range so the
-            # robot can turn toward the goal even when going forward is clear.
-            v_samples = np.arange(self.min_v, dynamic_max_v + self.v_resolution, self.v_resolution)
+            # Generate velocity candidates.
+            # Always include v=0 (pure rotation) when heading error is large so
+            # the robot can rotate to face the goal instead of circling.
+            v_forward = np.arange(self.min_v, dynamic_max_v + self.v_resolution, self.v_resolution)
+            if heading_error_to_goal > math.radians(30):
+                v_samples = np.concatenate(([0.0], v_forward))
+            else:
+                v_samples = v_forward
+
             w_samples = np.arange(-dynamic_max_w, dynamic_max_w + self.w_resolution, self.w_resolution)
 
             if len(v_samples) == 0 or len(w_samples) == 0:
@@ -103,14 +140,13 @@ class DynamicDWAComplete:
             best_v = 0.0
             best_w = 0.0
             best_scores_dbg = None  # for diagnostics
-
-            # Distance to goal at trajectory START (for progress guardrail)
-            dist_to_goal_start = math.hypot(goal_x - x, goal_y - y)
             
             for v in v_samples:
                 for w in w_samples:
-                    # Skip combinations that are dynamically infeasible
-                    if abs(w) > 1.5 * abs(v) + 0.5:
+                    # Feasibility filter: skip dynamically infeasible combinations.
+                    # For v=0 (pure rotation) allow full angular range – we do not
+                    # apply the speed-ratio filter so the robot can spin freely.
+                    if v > 0 and abs(w) > 1.5 * abs(v) + 0.5:
                         continue
                     
                     # Generate trajectory
@@ -129,6 +165,16 @@ class DynamicDWAComplete:
                     free_space_score = self.calc_free_space_score(
                         trajectory, scan_ranges, scan_angles, theta, goal_dir_world)
 
+                    # Progress penalty: discourage staying still (v≈0) when the goal
+                    # is far and no obstacle blocks the forward path.  Without this,
+                    # the robot may rotate in place indefinitely in open space instead
+                    # of making forward progress.
+                    # Thresholds: v<0.05 m/s ≈ stationary; goal >1 m away; forward
+                    # clearance >1 m (no imminent obstacle).
+                    progress_penalty = 0.0
+                    if v < 0.05 and dist_to_goal_start > 1.0 and min_forward_dist > 1.0:
+                        progress_penalty = -1.5
+
                     # Weighted total score
                     total_score = (
                         self.w_heading    * heading_score +
@@ -136,7 +182,8 @@ class DynamicDWAComplete:
                         self.w_speed      * speed_score +
                         self.w_clearance  * clearance_score +
                         self.w_path       * path_score +
-                        self.w_free_space * free_space_score
+                        self.w_free_space * free_space_score +
+                        progress_penalty
                     )
                     
                     if total_score > best_score:
@@ -156,15 +203,15 @@ class DynamicDWAComplete:
                    hasattr(self.node, 'control_counter') and self.node.control_counter % 50 == 0)
             if dbg and best_scores_dbg is not None:
                 h, g, sp, cl, pa, fs = best_scores_dbg
-                goal_dist = dist_to_goal_start
                 goal_dir_deg = math.degrees(goal_dir_world)
+                heading_err_deg = math.degrees(heading_error_to_goal)
                 traj_dir_deg = math.degrees(math.atan2(
                     best_trajectory[-1][1] - best_trajectory[0][1],
                     best_trajectory[-1][0] - best_trajectory[0][0]))
                 self.node.get_logger().info(
                     f"🎯 DWA selected v={best_v:.3f} w={best_w:.3f} | "
-                    f"goal_dist={goal_dist:.2f}m goal_dir={goal_dir_deg:.1f}° "
-                    f"traj_dir={traj_dir_deg:.1f}°"
+                    f"goal_dist={dist_to_goal_start:.2f}m heading_err={heading_err_deg:.1f}° "
+                    f"goal_dir={goal_dir_deg:.1f}° traj_dir={traj_dir_deg:.1f}°"
                 )
                 self.node.get_logger().info(
                     f"   scores: heading={h:.3f} goal={g:.3f} speed={sp:.3f} "
@@ -344,18 +391,32 @@ class DynamicDWAComplete:
         direction' bug: previously DWA had no explicit heading term so it could
         pick trajectories facing away from the goal.
 
+        For v≈0 (pure rotation) trajectories the robot barely moves, so the
+        start→end displacement is tiny and directionally unreliable.  In that
+        case we score by how well the robot's END ORIENTATION (theta) aligns
+        with the goal direction – this correctly rewards rotations that bring
+        the robot to face the goal.
+
         Returns a score in [0, 1] where 1 = perfect alignment.
         """
         if not trajectory or len(trajectory) < 2:
             return 0.0
 
         start_x, start_y, _ = trajectory[0]
-        end_x,   end_y,   _ = trajectory[-1]
+        end_x,   end_y, end_theta = trajectory[-1]
 
-        # Only compute direction if the trajectory moved a meaningful distance
+        # Only compute travel direction if the trajectory moved a meaningful distance.
+        # Below ~3 cm the start→end vector is directionally unreliable (pure rotation
+        # or near-zero v), so we fall back to scoring by end robot orientation.
+        MIN_MOVEMENT_FOR_DIR = 0.03  # metres
         move_dist = math.hypot(end_x - start_x, end_y - start_y)
-        if move_dist < 1e-4:
-            return 0.5  # No movement – neutral score
+        if move_dist < MIN_MOVEMENT_FOR_DIR:
+            # Pure/near-rotation: score by end robot orientation vs goal direction.
+            heading_error = abs(math.atan2(
+                math.sin(end_theta - goal_dir_world),
+                math.cos(end_theta - goal_dir_world)
+            ))
+            return max(0.0, 1.0 - heading_error / math.pi)
 
         traj_dir_world = math.atan2(end_y - start_y, end_x - start_x)
         heading_error = abs(math.atan2(math.sin(traj_dir_world - goal_dir_world),
