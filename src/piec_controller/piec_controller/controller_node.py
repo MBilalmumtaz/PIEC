@@ -9,6 +9,7 @@ import math
 import numpy as np
 import yaml
 import os
+import csv
 import time
 from collections import deque
 from ament_index_python.packages import get_package_share_directory
@@ -20,6 +21,7 @@ from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import Twist, PoseStamped, Pose
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseArray  # ADDED THIS IMPORT
+from std_msgs.msg import String           # for /emergency_stop/reason
 # Try to import the correct PINN service
 try:
     from piec_pinn_surrogate_msgs.srv import EvaluateTrajectory
@@ -200,6 +202,14 @@ class ControllerNode(Node):
         else:
             self.use_dwa = False
 
+        # ── Diagnostics CSV logger ────────────────────────────────────────────
+        self._csv_log_path = os.path.expanduser('~/piec_data/controller_anomalies.csv')
+        self._csv_file = None
+        self._csv_writer = None
+        self._init_csv_logger()
+        # Track last emergency stop reason received from the e-stop node
+        self._last_estop_reason = ''
+
         # QoS Settings
         scan_qos = QoSProfile(
             depth=20,
@@ -212,6 +222,11 @@ class ControllerNode(Node):
         self.create_subscription(Odometry, '/ukf/odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, self.scan_topic, self.scan_callback, scan_qos)
         self.create_subscription(PoseStamped, '/goal_pose', self.goal_callback, 10)
+        # Subscribe to emergency stop reason for CSV logging
+        self.create_subscription(
+            String, '/emergency_stop/reason',
+            self._estop_reason_callback, 10
+        )
 
         # Publishers
         # Use cmd_vel_topic parameter if provided, otherwise default to /cmd_vel_piec
@@ -246,7 +261,74 @@ class ControllerNode(Node):
         self.get_logger().info("🚀 Enhanced PIEC Controller READY with Improved Free Space Navigation")
         self.get_logger().info(f"Stuck detection: {self.stuck_threshold_distance}m movement in {self.stuck_threshold_time}s")
         self.get_logger().info("🛑 Emergency Stop node started, output to /cmd_vel")
-    def load_parameters_from_yaml(self):
+
+    # ── CSV Diagnostics Logger ────────────────────────────────────────────────
+
+    def _init_csv_logger(self):
+        """Initialise the CSV anomaly log file."""
+        try:
+            log_dir = os.path.dirname(self._csv_log_path)
+            os.makedirs(log_dir, exist_ok=True)
+            self._csv_file = open(self._csv_log_path, 'a', newline='')
+            self._csv_writer = csv.writer(self._csv_file)
+            # Write header only when the file is new / empty
+            if os.path.getsize(self._csv_log_path) == 0:
+                self._csv_writer.writerow([
+                    'timestamp', 'robot_x', 'robot_y', 'robot_yaw_deg',
+                    'goal_x', 'goal_y', 'goal_dist_m',
+                    'heading_err_deg', 'clearance_m',
+                    'v_cmd', 'w_cmd',
+                    'estop_reason', 'anomaly_type',
+                ])
+            self.get_logger().info(f'📝 Anomaly CSV logger: {self._csv_log_path}')
+        except Exception as e:
+            self.get_logger().warn(f'⚠️ Could not open CSV logger: {e}')
+            self._csv_writer = None
+
+    def _log_anomaly(self, anomaly_type: str, v_cmd: float, w_cmd: float,
+                     heading_err_deg: float, clearance_m: float):
+        """Write one row to the anomaly CSV log."""
+        if self._csv_writer is None:
+            return
+        try:
+            robot_x = robot_y = robot_yaw_deg = 0.0
+            goal_x = goal_y = goal_dist = 0.0
+            if self.odom is not None:
+                robot_x = self.odom.pose.pose.position.x
+                robot_y = self.odom.pose.pose.position.y
+                robot_yaw_deg = math.degrees(self.quat_to_yaw(self.odom.pose.pose.orientation))
+            if self.goal_position is not None:
+                goal_x, goal_y = self.goal_position
+                goal_dist = math.hypot(goal_x - robot_x, goal_y - robot_y)
+            self._csv_writer.writerow([
+                time.strftime('%Y-%m-%dT%H:%M:%S'),
+                f'{robot_x:.4f}', f'{robot_y:.4f}', f'{robot_yaw_deg:.2f}',
+                f'{goal_x:.4f}', f'{goal_y:.4f}', f'{goal_dist:.3f}',
+                f'{heading_err_deg:.2f}', f'{clearance_m:.3f}',
+                f'{v_cmd:.4f}', f'{w_cmd:.4f}',
+                self._last_estop_reason, anomaly_type,
+            ])
+            self._csv_file.flush()
+        except Exception as e:
+            self.get_logger().warn(f'CSV write error: {e}')
+
+    def _estop_reason_callback(self, msg: String):
+        """Store latest emergency stop reason for CSV logging."""
+        self._last_estop_reason = msg.data
+        if self.odom is not None:
+            x = self.odom.pose.pose.position.x
+            y = self.odom.pose.pose.position.y
+            yaw = self.quat_to_yaw(self.odom.pose.pose.orientation)
+            heading_err = 0.0
+            if self.goal_position is not None:
+                gx, gy = self.goal_position
+                goal_dir = math.atan2(gy - y, gx - x)
+                heading_err = math.degrees(abs(math.atan2(
+                    math.sin(goal_dir - yaw), math.cos(goal_dir - yaw))))
+            self._log_anomaly(
+                'EMERGENCY_STOP', 0.0, 0.0, heading_err,
+                self.obstacle_distance,
+            )
         """Load parameters from YAML configuration file"""
         config_path = os.path.join(
             get_package_share_directory('piec_controller'),
@@ -318,8 +400,8 @@ class ControllerNode(Node):
             'rotate_free_space_threshold': 1.5,  # Min clearance (m) to use combined forward+turn instead of rotate-in-place
             
             # Path validation parameters
-            'path_staleness_threshold': 0.5,  # Maximum allowed deviation between path start and robot position (meters)
-            'path_staleness_warning_threshold': 0.2,  # Warning threshold for path start deviation (meters)
+            'path_staleness_threshold': 1.0,  # Increased: accept paths up to 1m from robot position
+            'path_staleness_warning_threshold': 0.3,  # Warning threshold for path start deviation (meters)
             
             # Control mode
             'use_dwa': True,
@@ -2043,7 +2125,7 @@ class ControllerNode(Node):
         # Far zone: no scaling
         return v, w
     def publish_cmd(self, linear_vel, angular_vel):
-        """Fixed publish command with calibration and motor health tracking"""
+        """Fixed publish command with calibration, motor health tracking, and diagnostics."""
         msg = Twist()
         
         # Store raw values for logging
@@ -2080,27 +2162,40 @@ class ControllerNode(Node):
         msg.linear.x = linear_vel
         msg.angular.z = angular_vel
         
-        # Enhanced logging with sign correction diagnostics
-        if self.debug_mode and self.control_counter % 20 == 0:
-            # Determine turn direction
-            turn_dir = "NONE"
+        # ── Per-command diagnostics: heading_err, clearance, v, w ─────────────
+        if self.debug_mode and self.control_counter % 20 == 0 and self.odom is not None:
+            x = self.odom.pose.pose.position.x
+            y = self.odom.pose.pose.position.y
+            yaw = self.quat_to_yaw(self.odom.pose.pose.orientation)
+
+            heading_err_deg = 0.0
+            goal_dir_deg = 0.0
+            goal_dist = 0.0
+            if self.goal_position is not None:
+                gx, gy = self.goal_position
+                goal_dist = math.hypot(gx - x, gy - y)
+                goal_dir = math.atan2(gy - y, gx - x)
+                goal_dir_deg = math.degrees(goal_dir)
+                heading_err_deg = math.degrees(abs(math.atan2(
+                    math.sin(goal_dir - yaw), math.cos(goal_dir - yaw))))
+
+            clearance = self.obstacle_distance if self.obstacle_detected else float('inf')
+
+            turn_dir = 'NONE'
             if abs(raw_angular) > 0.01:
-                turn_dir = "LEFT (CCW)" if raw_angular > 0 else "RIGHT (CW)"
-            
-            corrected_dir = "NONE"
-            if abs(angular_vel) > 0.01:
-                corrected_dir = "LEFT (CCW)" if angular_vel > 0 else "RIGHT (CW)"
-            
+                turn_dir = 'LEFT(CCW)' if raw_angular > 0 else 'RIGHT(CW)'
+
             self.get_logger().info(
-                f"📤 Cmd: v={linear_vel:.3f} m/s, w_raw={raw_angular:.3f} rad/s [{turn_dir}] "
-                f"→ w_corrected={angular_vel:.3f} rad/s [{corrected_dir}] "
-                f"(sign_correction={self.angular_sign:.1f})"
+                f'📤 CMD v={linear_vel:.3f} w={angular_vel:.3f} [{turn_dir}]'
+                f' | heading_err={heading_err_deg:.1f}° goal_dir={goal_dir_deg:.1f}°'
+                f' goal_dist={goal_dist:.2f}m clearance={clearance:.2f}m'
             )
-            
-            # Show velocity comparison if we have actual velocity
-            if hasattr(self, 'last_actual_linear'):
-                self.get_logger().info(
-                    f"📊 Velocity: Commanded={abs(linear_vel):.3f}, Actual={self.last_actual_linear:.3f}"
+
+            # Log anomaly to CSV when heading error is large or v=0 with a goal
+            if heading_err_deg > 30.0 and goal_dist > 0.3:
+                self._log_anomaly(
+                    'LARGE_HEADING_ERR', linear_vel, angular_vel,
+                    heading_err_deg, clearance,
                 )
         
         self.cmd_pub.publish(msg)
@@ -2127,6 +2222,12 @@ def main():
         node.get_logger().error(traceback.format_exc())
     finally:
         node.publish_cmd(0.0, 0.0)
+        # Ensure CSV log is flushed / closed cleanly
+        if hasattr(node, '_csv_file') and node._csv_file is not None:
+            try:
+                node._csv_file.close()
+            except Exception:
+                pass
         node.destroy_node()
         rclpy.shutdown()
 

@@ -33,25 +33,28 @@ class DynamicDWAComplete:
         self.dt = 0.05
         self.v_resolution = 0.05
         self.w_resolution = 0.05
-        
-        # Scoring weights:
-        # heading  – trajectory end-direction vs goal direction (primary direction fix)
-        # goal     – proximity of trajectory end to goal/path
-        # speed    – prefer moving over standing still
-        # clearance– obstacle safety margin
-        # path     – lateral deviation from planned path (forward waypoints only)
-        # free_space – open-area preference
+
+        # ── DWA Scoring weights (GWO-DWA tuned, 2024 approach) ──────────────
+        # Grey-Wolf Optimizer surveys (Ref: GWO-DWA, IEEE 2024) show that
+        # heading alignment and goal proximity should dominate over path-proximity
+        # when the heading error is large, preventing "follows path backwards".
         #
-        # TUNING NOTE: w_heading and w_goal are raised so goal-direction alignment
-        # dominates over raw path-proximity, preventing the "follows path but moves
-        # in wrong direction" failure mode that occurs when the path score (formerly
-        # 6.0) overwhelmed every other term.
-        self.w_heading = 5.0
-        self.w_goal = 4.0
-        self.w_speed = 0.5
+        # heading    – end-orientation vs goal direction (dominant term)
+        # goal       – proximity to goal at trajectory end
+        # speed      – prefer non-zero velocities
+        # clearance  – obstacle safety margin (safety constraint)
+        # path       – lateral deviation from planned path (forward WPs only)
+        # free_space – open-area preference (tie-breaker)
+        self.w_heading = 6.0     # raised from 5.0 for stronger goal alignment
+        self.w_goal = 4.5        # raised from 4.0
+        self.w_speed = 0.8       # raised from 0.5 to discourage v=0, w=0
         self.w_clearance = 3.0
-        self.w_path = 3.0        # Reduced – forward-only path score now focuses this term
+        self.w_path = 2.0        # reduced: path score can mislead when path is stale
         self.w_free_space = 0.3
+
+        # Heading error thresholds controlling velocity sample generation
+        self.ROTATE_ONLY_ANGLE_RAD = math.radians(120)  # rotate-only above this
+        self.PREFER_ROTATE_ANGLE_RAD = math.radians(30)  # include v=0 above this
         
         # Robot parameters
         self.robot_radius = 0.35
@@ -153,12 +156,20 @@ class DynamicDWAComplete:
 
             # Dynamic velocity limits based on obstacles
             dynamic_max_v, dynamic_max_w = self.calculate_dynamic_limits(scan_ranges, scan_angles, theta)
-            
-            # Generate velocity candidates.
-            # Always include v=0 (pure rotation) when heading error is large so
-            # the robot can rotate to face the goal instead of circling.
+
+            # ── Velocity sample generation ─────────────────────────────────
+            # When heading error is very large (>120°) the robot is essentially
+            # facing backwards relative to the goal.  Forcing forward motion in
+            # that situation causes circular drift.  Use ONLY pure-rotation
+            # candidates so the robot first aligns with the goal, then drives.
+            #
+            # Between 30° and 120° we include both forward and pure-rotation so
+            # DWA can select the best trade-off.
             v_forward = np.arange(self.min_v, dynamic_max_v + self.v_resolution, self.v_resolution)
-            if heading_error_to_goal > math.radians(30):
+            if heading_error_to_goal > self.ROTATE_ONLY_ANGLE_RAD:
+                # Rotate in place only – no forward samples
+                v_samples = np.array([0.0])
+            elif heading_error_to_goal > self.PREFER_ROTATE_ANGLE_RAD:
                 v_samples = np.concatenate(([0.0], v_forward))
             else:
                 v_samples = v_forward
@@ -230,8 +241,27 @@ class DynamicDWAComplete:
                         best_scores_dbg = (heading_score, goal_score, speed_score,
                                            clearance_score, path_score, free_space_score)
             
-            # If no valid trajectory found, use fallback
+            # If no valid trajectory found, use fallback.
+            # For large heading errors with no safe trajectory, issue a
+            # forced in-place rotation so the robot can align before moving.
             if best_trajectory is None:
+                if heading_error_to_goal > self.PREFER_ROTATE_ANGLE_RAD:
+                    # Determine rotation sign from heading error sign
+                    heading_diff = math.atan2(
+                        math.sin(goal_dir_world - theta),
+                        math.cos(goal_dir_world - theta)
+                    )
+                    forced_w = math.copysign(
+                        min(self.max_w * 0.5, abs(heading_diff) * 0.7),
+                        heading_diff
+                    )
+                    if hasattr(self.node, 'debug_mode') and self.node.debug_mode:
+                        self.node.get_logger().warn(
+                            f'⚠️ DWA no valid traj, forced rotation: '
+                            f'heading_err={math.degrees(heading_error_to_goal):.1f}° '
+                            f'→ w={forced_w:.3f}'
+                        )
+                    return 0.0, forced_w
                 return self.fallback_control(current_pose, path)
             
             # Throttled diagnostics

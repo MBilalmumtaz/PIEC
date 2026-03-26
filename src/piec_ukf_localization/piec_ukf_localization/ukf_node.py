@@ -6,8 +6,23 @@ from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Quaternion
 import numpy as np
 import math
-from scipy.linalg import cholesky
 from numpy.linalg import LinAlgError
+
+# Use numpy.linalg.cholesky (always returns lower-triangular) so that no
+# SciPy version constraint is imposed.  If SciPy is available we still
+# prefer its Cholesky because it raises LinAlgError on failure (matching
+# the existing exception handler), whereas numpy raises numpy.linalg.LinAlgError
+# which is the same class – both are subclasses of numpy.linalg.LinAlgError.
+try:
+    from scipy.linalg import cholesky as _scipy_cholesky
+
+    def cholesky(M):
+        """Thin wrapper: always return lower-triangular factor."""
+        return _scipy_cholesky(M, lower=True)
+except ImportError:
+    def cholesky(M):           # noqa: F811
+        """numpy fallback – always lower-triangular."""
+        return np.linalg.cholesky(M)
 
 class UKFNode(Node):
     def __init__(self):
@@ -22,6 +37,7 @@ class UKFNode(Node):
         self.declare_parameter('use_imu_orientation', True)
         self.declare_parameter('initial_yaw', 0.0)
         self.declare_parameter('imu_yaw_offset', 0.0)
+        self.declare_parameter('invert_yaw', False)   # set True to flip yaw 180° for inverted IMU mount
         self.declare_parameter('use_wheel_velocity', True)
         self.declare_parameter('debug_mode', True)
 
@@ -32,6 +48,7 @@ class UKFNode(Node):
         self.use_imu_orientation = self.get_parameter('use_imu_orientation').value
         self.initial_yaw = float(self.get_parameter('initial_yaw').value)
         self.imu_yaw_offset = float(self.get_parameter('imu_yaw_offset').value)
+        self.invert_yaw = bool(self.get_parameter('invert_yaw').value)
         self.use_wheel_velocity = self.get_parameter('use_wheel_velocity').value
         self.debug_mode = self.get_parameter('debug_mode').value
 
@@ -89,7 +106,8 @@ class UKFNode(Node):
         self._imu_debug_counter = 0
         
         self.get_logger().info(f'UKF node started. odom_topic: {self.odom_topic} imu_topic: {self.imu_topic}')
-        self.get_logger().info(f'State dimension: {self.x.size}, Use IMU orientation: {self.use_imu_orientation}')
+        self.get_logger().info(f'State dimension: {self.x.size}, Use IMU orientation: {self.use_imu_orientation}, '
+                               f'invert_yaw: {self.invert_yaw}')
 
     def quat_to_yaw(self, q):
         """Fixed quaternion to yaw conversion"""
@@ -189,6 +207,10 @@ class UKFNode(Node):
         # Store current IMU values
         # Remove startup bias, then apply static frame correction
         self.current_imu_yaw = yaw - self.initial_imu_yaw + self.imu_yaw_offset
+
+        # Optional 180° flip for IMUs mounted upside-down or with inverted z-axis
+        if self.invert_yaw:
+            self.current_imu_yaw = self.current_imu_yaw + math.pi
         
         # Normalize yaw to [-π, π] to prevent angle wrapping issues
         self.current_imu_yaw = math.atan2(math.sin(self.current_imu_yaw), math.cos(self.current_imu_yaw))
@@ -345,7 +367,7 @@ class UKFNode(Node):
             P += (1e-6 - min_eigenvalue + 1e-9) * np.eye(n)
         
         try:
-            S = cholesky(P * c, lower=True)
+            S = cholesky(P * c)
         except LinAlgError:
             self.get_logger().error("❌ Cholesky failed, using eigendecomposition fallback")
             # Fallback: Use eigenvalue decomposition
