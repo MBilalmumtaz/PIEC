@@ -1302,6 +1302,18 @@ class ControllerNode(Node):
         y = pose.position.y
         yaw = self.quat_to_yaw(pose.orientation)
 
+        # Throttled pose + goal diagnostics
+        if self.debug_mode and self.control_counter % 50 == 0:
+            goal_info = ""
+            if self.goal_position is not None:
+                gx, gy = self.goal_position
+                gdist = math.hypot(gx - x, gy - y)
+                gdir  = math.degrees(math.atan2(gy - y, gx - x))
+                goal_info = f" | goal=({gx:.2f},{gy:.2f}) dist={gdist:.2f}m dir={gdir:.1f}°"
+            self.get_logger().info(
+                f"🤖 Pose: ({x:.3f}, {y:.3f}, yaw={math.degrees(yaw):.1f}°){goal_info}"
+            )
+
         # Update distance tracking
         current_position = (x, y)
         if self.last_position is not None:
