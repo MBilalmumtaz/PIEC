@@ -442,8 +442,11 @@ class UKFNode(Node):
         # Calculate Kalman gain
         K = Pxz @ np.linalg.inv(Pzz)
         
-        # Update state
+        # Update state with normalized innovation
         innov = (z - z_pred).reshape(-1, 1)
+        # Normalize yaw innovation for pose measurements to prevent wrap-around divergence
+        if meas_type == 'pose':
+            innov[2, 0] = math.atan2(math.sin(innov[2, 0]), math.cos(innov[2, 0]))
         self.x = self.x + (K @ innov).flatten()
         
         # Update covariance

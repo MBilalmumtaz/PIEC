@@ -11,8 +11,8 @@ class EmergencyStop(Node):
         super().__init__('emergency_stop')
         
         # Parameters
-        self.declare_parameter('stop_distance', 0.62)
-        self.declare_parameter('slow_distance', 0.92)
+        self.declare_parameter('stop_distance', 0.90)   # well above LiDAR range_min of 0.6 m
+        self.declare_parameter('slow_distance', 1.20)   # wider slow zone
         self.declare_parameter('enable_emergency_stop', True)
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('cmd_vel_topic', '/cmd_vel_piec')
@@ -76,16 +76,27 @@ class EmergencyStop(Node):
         for i in range(len(ranges)):
             angle = angle_min + i * angle_increment
             if -0.785 <= angle <= 0.785:
-                if np.isfinite(ranges[i]) and msg.range_min < ranges[i] < msg.range_max:
-                    front_indices.append(i)
-        
+                front_indices.append(i)
+
         if not front_indices:
             self.min_obstacle_distance = 10.0
             self.obstacle_persist_count = 0
             return
-            
+
         front_ranges = ranges[front_indices]
-        self.min_obstacle_distance = np.min(front_ranges)
+
+        # Collect valid readings; treat readings at or below range_min as very close
+        valid_ranges = []
+        for r in front_ranges:
+            if np.isfinite(r) and r > msg.range_min and r < msg.range_max:
+                valid_ranges.append(r)
+
+        if not valid_ranges:
+            # No valid readings in forward sector – sensor blind-spot or all readings
+            # below range_min; treat conservatively as an obstacle very close.
+            self.min_obstacle_distance = msg.range_min if msg.range_min > 0.0 else 0.5
+        else:
+            self.min_obstacle_distance = float(np.min(valid_ranges))
         
         # Track persistence
         if self.min_obstacle_distance < self.stop_distance:
@@ -96,7 +107,7 @@ class EmergencyStop(Node):
         # Adaptive threshold
         adaptive_stop_distance = self.stop_distance
         if self.obstacle_persist_count > 10:
-            adaptive_stop_distance = max(0.20, self.stop_distance * 0.67)
+            adaptive_stop_distance = max(0.40, self.stop_distance * 0.67)
         
         was_emergency = self.emergency_active
         if self.min_obstacle_distance < adaptive_stop_distance:

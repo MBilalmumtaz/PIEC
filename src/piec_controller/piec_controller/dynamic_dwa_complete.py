@@ -34,12 +34,19 @@ class DynamicDWAComplete:
         self.v_resolution = 0.05
         self.w_resolution = 0.05
         
-        # Enhanced weights – increased path weight to improve tracking, and clearance weight for safety
-        self.w_goal = 1.5
+        # Scoring weights:
+        # heading  – trajectory end-direction vs goal direction (primary direction fix)
+        # goal     – proximity of trajectory end to goal/path
+        # speed    – prefer moving over standing still
+        # clearance– obstacle safety margin
+        # path     – lateral deviation from planned path
+        # free_space – open-area preference
+        self.w_heading = 4.0        # NEW: heading alignment toward goal (key fix for wrong-direction drift)
+        self.w_goal = 2.0
         self.w_speed = 0.7
-        self.w_clearance = 5.0      # Increased from 3.0 to prioritise avoiding obstacles
-        self.w_path = 8.0            # Increased from 4.0 to strongly encourage following the path
-        self.w_free_space = 0.8      # NEW: Free space preference
+        self.w_clearance = 4.0
+        self.w_path = 6.0
+        self.w_free_space = 0.5
         
         # Robot parameters
         self.robot_radius = 0.35
@@ -55,10 +62,14 @@ class DynamicDWAComplete:
         self.fallback_rotation_start_time = None
         self.max_rotation_time = MAX_ROTATION_TIME
         
+        # Braking model for real-robot safety
+        self.brake_decel = 0.6   # m/s² conservative deceleration
+        self.cmd_latency = 0.2   # s command-to-wheel latency margin
+
         self.node.get_logger().info("Dynamic DWA Complete initialized with Free Space Awareness")
 
     def plan(self, current_pose, path, scan_ranges, scan_angles):
-        """Main planning function with free space consideration"""
+        """Main planning function with frame-correct heading and progress scoring"""
         if path is None or len(path.poses) == 0:
             return 0.0, 0.0
             
@@ -68,28 +79,20 @@ class DynamicDWAComplete:
         try:
             # Get current state
             x, y, theta = current_pose
-            
-            # Dynamic velocity limits based on obstacles and free space
-            dynamic_max_v, dynamic_max_w = self.calculate_dynamic_limits(scan_ranges, scan_angles, theta)
-            
-            # Generate velocity candidates
-            v_samples = np.arange(self.min_v, dynamic_max_v + self.v_resolution, self.v_resolution)
-            w_samples = np.arange(-dynamic_max_w, dynamic_max_w + self.w_resolution, self.w_resolution)
 
-            # **NEW: Check if forward direction is clear - if so, restrict to forward velocities**
+            # Goal position (world frame)
             goal_x = path.poses[-1].pose.position.x
             goal_y = path.poses[-1].pose.position.y
-            goal_dir = math.atan2(goal_y - y, goal_x - x)
+            # Goal direction in world frame – used for heading scoring
+            goal_dir_world = math.atan2(goal_y - y, goal_x - x)
 
-            forward_clearance = self.get_clearance_in_direction_scan(scan_ranges, scan_angles, theta, goal_dir)
-
-            if forward_clearance > 1.0:  # More than 1m clearance in forward direction
-                # Remove any negative velocities - only allow forward motion
-                v_samples = v_samples[v_samples >= 0]
-                if hasattr(self.node, 'debug_mode') and self.node.debug_mode and hasattr(self.node, 'control_counter') and self.node.control_counter % 50 == 0:
-                    self.node.get_logger().info(
-                        f"✅ Forward clear ({forward_clearance:.2f}m) - restricting to forward motion only"
-                    )
+            # Dynamic velocity limits based on obstacles
+            dynamic_max_v, dynamic_max_w = self.calculate_dynamic_limits(scan_ranges, scan_angles, theta)
+            
+            # Generate velocity candidates – always include full w range so the
+            # robot can turn toward the goal even when going forward is clear.
+            v_samples = np.arange(self.min_v, dynamic_max_v + self.v_resolution, self.v_resolution)
+            w_samples = np.arange(-dynamic_max_w, dynamic_max_w + self.w_resolution, self.w_resolution)
 
             if len(v_samples) == 0 or len(w_samples) == 0:
                 return self.fallback_control(current_pose, path)
@@ -99,33 +102,40 @@ class DynamicDWAComplete:
             best_score = -float('inf')
             best_v = 0.0
             best_w = 0.0
+            best_scores_dbg = None  # for diagnostics
+
+            # Distance to goal at trajectory START (for progress guardrail)
+            dist_to_goal_start = math.hypot(goal_x - x, goal_y - y)
             
             for v in v_samples:
                 for w in w_samples:
-                    # Skip combinations that are too extreme
-                    if abs(w) > 1.5 * abs(v) + 0.5:  # Too much rotation for speed
+                    # Skip combinations that are dynamically infeasible
+                    if abs(w) > 1.5 * abs(v) + 0.5:
                         continue
                     
                     # Generate trajectory
                     trajectory = self.generate_trajectory(x, y, theta, v, w)
                     
-                    # Check if trajectory is valid
+                    # Check if trajectory is collision-free
                     if not self.check_trajectory(trajectory, scan_ranges, scan_angles, theta):
                         continue
                     
                     # Calculate scores
-                    goal_score = self.calc_goal_score(trajectory, path)
+                    heading_score = self.calc_heading_score(trajectory, goal_dir_world)
+                    goal_score = self.calc_goal_score(trajectory, path, dist_to_goal_start)
                     speed_score = self.calc_speed_score(v, w)
                     clearance_score = self.calc_clearance_score(trajectory, scan_ranges, scan_angles, theta)
                     path_score = self.calc_path_score(trajectory, path)
-                    free_space_score = self.calc_free_space_score(trajectory, scan_ranges, scan_angles, theta, goal_dir)
-                    
+                    free_space_score = self.calc_free_space_score(
+                        trajectory, scan_ranges, scan_angles, theta, goal_dir_world)
+
                     # Weighted total score
                     total_score = (
-                        self.w_goal * goal_score +
-                        self.w_speed * speed_score +
-                        self.w_clearance * clearance_score +
-                        self.w_path * path_score +
+                        self.w_heading    * heading_score +
+                        self.w_goal       * goal_score +
+                        self.w_speed      * speed_score +
+                        self.w_clearance  * clearance_score +
+                        self.w_path       * path_score +
                         self.w_free_space * free_space_score
                     )
                     
@@ -134,16 +144,32 @@ class DynamicDWAComplete:
                         best_v = v
                         best_w = w
                         best_trajectory = trajectory
+                        best_scores_dbg = (heading_score, goal_score, speed_score,
+                                           clearance_score, path_score, free_space_score)
             
             # If no valid trajectory found, use fallback
             if best_trajectory is None:
                 return self.fallback_control(current_pose, path)
             
-            # Log DWA decision
-            if hasattr(self.node, 'debug_mode') and self.node.debug_mode and hasattr(self.node, 'control_counter') and self.node.control_counter % 50 == 0:
-                clearance = self.calc_min_clearance(best_trajectory, scan_ranges, scan_angles, theta)
-                free_space = self.calc_free_space_score(best_trajectory, scan_ranges, scan_angles, theta, goal_dir)
-                self.node.get_logger().debug(f"DWA: v={best_v:.3f}, w={best_w:.3f}, score={best_score:.3f}, clearance={clearance:.3f}, free={free_space:.3f}")
+            # Throttled diagnostics
+            dbg = (hasattr(self.node, 'debug_mode') and self.node.debug_mode and
+                   hasattr(self.node, 'control_counter') and self.node.control_counter % 50 == 0)
+            if dbg and best_scores_dbg is not None:
+                h, g, sp, cl, pa, fs = best_scores_dbg
+                goal_dist = dist_to_goal_start
+                goal_dir_deg = math.degrees(goal_dir_world)
+                traj_dir_deg = math.degrees(math.atan2(
+                    best_trajectory[-1][1] - best_trajectory[0][1],
+                    best_trajectory[-1][0] - best_trajectory[0][0]))
+                self.node.get_logger().info(
+                    f"🎯 DWA selected v={best_v:.3f} w={best_w:.3f} | "
+                    f"goal_dist={goal_dist:.2f}m goal_dir={goal_dir_deg:.1f}° "
+                    f"traj_dir={traj_dir_deg:.1f}°"
+                )
+                self.node.get_logger().info(
+                    f"   scores: heading={h:.3f} goal={g:.3f} speed={sp:.3f} "
+                    f"clearance={cl:.3f} path={pa:.3f} free_space={fs:.3f}"
+                )
             
             return best_v, best_w
             
@@ -227,87 +253,130 @@ class DynamicDWAComplete:
         return trajectory
 
     def check_trajectory(self, trajectory, scan_ranges, scan_angles, robot_theta):
-        """Check if trajectory is collision-free with enhanced checking"""
+        """Check if trajectory is collision-free with conservative checking"""
         if not trajectory:
             return False
         
-        # Check multiple points along trajectory
-        check_indices = [0, len(trajectory)//3, 2*len(trajectory)//3, -1]
-        
-        for idx in check_indices:
-            if idx >= len(trajectory):
-                continue
-                
+        # Check multiple points along trajectory (skip index 0 – robot centre)
+        step = max(1, len(trajectory) // 8)
+        for idx in range(1, len(trajectory), step):
             x, y, theta = trajectory[idx]
             
             # Convert point to robot frame
             dx = x - trajectory[0][0]
             dy = y - trajectory[0][1]
             
-            # Rotate to robot frame
             local_x = dx * math.cos(-robot_theta) - dy * math.sin(-robot_theta)
             local_y = dx * math.sin(-robot_theta) + dy * math.cos(-robot_theta)
             
-            # Check distance from robot center
             dist = math.hypot(local_x, local_y)
             angle = math.atan2(local_y, local_x)
-            
-            # Check for collisions using laser data with safety margin
-            if not self.check_collision(dist, angle, scan_ranges, scan_angles, safety_margin=0.15):
+
+            # Speed at this waypoint (approximated as constant) for braking margin
+            # trajectory[0] speed ≈ v, but we don't have it here; use the arc length / time
+            # as a proxy.  A conservative fixed extra margin handles this.
+            if not self.check_collision(dist, angle, scan_ranges, scan_angles, safety_margin=0.25):
                 return False
         
         return True
 
     def check_collision(self, dist, angle, scan_ranges, scan_angles, safety_margin=0.05):
         """
-        Check for collision at a specific point with safety margin.
-        Returns True if no collision (safe), False if collision.
+        Check for collision at a specific robot-frame point with safety margin.
+        Returns True if no collision (safe), False if collision detected.
+
+        IMPORTANT – scan_angles must be in sensor/robot frame (same as `angle`).
+        Uses normalized angle difference to avoid wrap-around artefacts.
+        Invalid scan readings (NaN, Inf, or below 0.1 m) in the queried direction
+        are treated conservatively: if the queried direction is within a forward ±90°
+        cone and the reading is invalid/near-range, we assume something is close.
         """
         if scan_ranges is None or scan_angles is None:
-            return True  # No scan data, assume safe
+            return True  # No scan data – assume safe
 
-        # Find closest scan angle
+        # Find closest scan angle using normalized difference
         min_angle_diff = float('inf')
         closest_idx = 0
         for i, scan_angle in enumerate(scan_angles):
-            angle_diff = abs(scan_angle - angle)
-            if angle_diff < min_angle_diff:
-                min_angle_diff = angle_diff
+            # Normalize to [-π, π] before comparing
+            a_diff = abs(math.atan2(math.sin(scan_angle - angle),
+                                     math.cos(scan_angle - angle)))
+            if a_diff < min_angle_diff:
+                min_angle_diff = a_diff
                 closest_idx = i
 
         if closest_idx < len(scan_ranges):
             scan_dist = scan_ranges[closest_idx]
-            # Required clearance is the distance from robot center to the point plus robot radius
+
+            # Conservative handling of invalid readings:
+            # If the best-matching scan angle is within ±90° and the reading is
+            # suspicious (NaN, Inf, or very small), treat it as occupied.
+            if min_angle_diff < math.pi / 2:
+                if not math.isfinite(scan_dist) or scan_dist < 0.1:
+                    # Unknown / sensor blind-spot → treat as just-at-range_min distance
+                    # This prevents driving into sensor dead-zones.
+                    return False
+
+            # Normal collision check: obstacle closer than trajectory point + clearance?
             if 0.1 < scan_dist < dist + self.robot_radius + safety_margin:
                 return False  # Collision!
+
         return True
 
-    def calc_goal_score(self, trajectory, path):
-        """Calculate goal-reaching score"""
+    def calc_heading_score(self, trajectory, goal_dir_world):
+        """
+        Score how well the trajectory end-direction aligns with the world-frame
+        goal direction.  This is the primary fix for the 'robot drifts wrong
+        direction' bug: previously DWA had no explicit heading term so it could
+        pick trajectories facing away from the goal.
+
+        Returns a score in [0, 1] where 1 = perfect alignment.
+        """
+        if not trajectory or len(trajectory) < 2:
+            return 0.0
+
+        start_x, start_y, _ = trajectory[0]
+        end_x,   end_y,   _ = trajectory[-1]
+
+        # Only compute direction if the trajectory moved a meaningful distance
+        move_dist = math.hypot(end_x - start_x, end_y - start_y)
+        if move_dist < 1e-4:
+            return 0.5  # No movement – neutral score
+
+        traj_dir_world = math.atan2(end_y - start_y, end_x - start_x)
+        heading_error = abs(math.atan2(math.sin(traj_dir_world - goal_dir_world),
+                                        math.cos(traj_dir_world - goal_dir_world)))
+        # Score: 1 when aligned (error=0), 0 when opposite (error=π)
+        return max(0.0, 1.0 - heading_error / math.pi)
+
+    def calc_goal_score(self, trajectory, path, dist_to_goal_start=None):
+        """Calculate goal-reaching score with progress guardrail"""
         if not trajectory or not path.poses:
             return 0.0
         
-        # Use end of trajectory
         end_x, end_y, _ = trajectory[-1]
-        
-        # Find progress along path
-        min_dist = float('inf')
-        for pose in path.poses:
-            px = pose.pose.position.x
-            py = pose.pose.position.y
-            dist = math.hypot(px - end_x, py - end_y)
-            if dist < min_dist:
-                min_dist = dist
-        
-        # Also consider heading toward goal
         start_x, start_y, _ = trajectory[0]
+
         goal_x = path.poses[-1].pose.position.x
         goal_y = path.poses[-1].pose.position.y
-        
-        initial_dist = math.hypot(goal_x - start_x, goal_y - start_y)
-        progress = max(0, initial_dist - min_dist)
-        
-        return 0.7 / (1.0 + min_dist) + 0.3 * progress / max(initial_dist, 0.1)
+
+        # Distance from trajectory END to final goal
+        end_to_goal = math.hypot(goal_x - end_x, goal_y - end_y)
+
+        # Distance from trajectory START to final goal
+        if dist_to_goal_start is None:
+            dist_to_goal_start = math.hypot(goal_x - start_x, goal_y - start_y)
+
+        # Progress: positive if trajectory moves TOWARD goal
+        progress = dist_to_goal_start - end_to_goal  # positive = good
+
+        # Proximity score (higher when trajectory ends near goal)
+        proximity_score = 1.0 / (1.0 + end_to_goal)
+
+        # Progress score (normalised, clipped so only forward progress is rewarded)
+        progress_score = max(0.0, progress) / max(dist_to_goal_start, 0.1)
+
+        return 0.5 * proximity_score + 0.5 * progress_score
 
     def calc_speed_score(self, v, w):
         """Calculate speed score with better balancing"""
@@ -406,45 +475,48 @@ class DynamicDWAComplete:
         return free_space_sum / count
 
     def get_clearance_at(self, dist, angle, scan_ranges, scan_angles):
-        """Get clearance at a specific point in robot frame"""
+        """Get clearance at a specific point in robot frame using normalized angle diff"""
         if scan_ranges is None or scan_angles is None:
             return 1.0
         
-        # Find closest scan angle
+        # Find closest scan angle using normalized difference
         min_angle_diff = float('inf')
         closest_idx = 0
         
         for i, scan_angle in enumerate(scan_angles):
-            angle_diff = abs(scan_angle - angle)
-            if angle_diff < min_angle_diff:
-                min_angle_diff = angle_diff
+            a_diff = abs(math.atan2(math.sin(scan_angle - angle),
+                                     math.cos(scan_angle - angle)))
+            if a_diff < min_angle_diff:
+                min_angle_diff = a_diff
                 closest_idx = i
         
         if closest_idx < len(scan_ranges):
             scan_dist = scan_ranges[closest_idx]
-            if scan_dist > 0.1:
+            if math.isfinite(scan_dist) and scan_dist > 0.1:
                 return scan_dist - dist - self.robot_radius
         
         return 2.0  # Default large clearance
 
     def get_clearance_in_direction_scan(self, scan_ranges, scan_angles, robot_theta, world_angle):
         """
-        Get clearance in a world direction using scan data
+        Get clearance in a world-frame direction using scan data.
+        Converts world_angle to sensor/robot frame before comparing with scan_angles.
         """
         if scan_ranges is None or scan_angles is None:
             return float('inf')
 
-        # Convert world angle to robot frame
+        # Convert world angle to robot/sensor frame
         local_angle = world_angle - robot_theta
         local_angle = math.atan2(math.sin(local_angle), math.cos(local_angle))
 
-        # Find closest scan angle
+        # Find closest scan angle using normalized difference
         min_diff = float('inf')
         closest_range = float('inf')
 
         for scan_angle, scan_range in zip(scan_angles, scan_ranges):
-            diff = abs(scan_angle - local_angle)
-            if diff < min_diff and scan_range > 0.1:
+            diff = abs(math.atan2(math.sin(scan_angle - local_angle),
+                                   math.cos(scan_angle - local_angle)))
+            if diff < min_diff and math.isfinite(scan_range) and scan_range > 0.1:
                 min_diff = diff
                 closest_range = scan_range
 
