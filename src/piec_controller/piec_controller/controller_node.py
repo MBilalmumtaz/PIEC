@@ -1449,13 +1449,23 @@ class ControllerNode(Node):
                 v = np.clip(v, 0.0, self.max_linear_vel * 0.8)
                 w = np.clip(w, -self.max_angular_vel * 0.8, self.max_angular_vel * 0.8)
                 
-                # Apply min_linear_vel ONLY when angular command is small.
-                # When |w| is large the robot is turning sharply; forcing min forward
-                # speed at the same time produces the "circular motion" failure mode.
-                # Threshold: if angular rate exceeds this, skip the min-vel clamp.
+                # Apply min_linear_vel ONLY when angular command is small AND
+                # heading error to goal is within a tolerable range.
+                # When the robot needs to rotate significantly (>30°) to face the
+                # goal, forcing min forward speed at the same time produces circular
+                # motion – the previous failure mode.  We skip the min-vel clamp
+                # whenever the heading error is large OR angular rate is high.
                 _angular_threshold_for_min_vel = 0.25  # rad/s
                 if v > 0 and v < self.min_linear_vel:
-                    if abs(w) < _angular_threshold_for_min_vel:
+                    _large_heading_error = False
+                    if self.goal_position is not None:
+                        gx, gy = self.goal_position
+                        _goal_dir = math.atan2(gy - y, gx - x)
+                        _heading_err = abs(math.atan2(
+                            math.sin(_goal_dir - yaw), math.cos(_goal_dir - yaw)))
+                        _large_heading_error = _heading_err > math.radians(30)
+
+                    if abs(w) < _angular_threshold_for_min_vel and not _large_heading_error:
                         v = self.min_linear_vel
                         if self.debug_mode and self.control_counter % 40 == 0:
                             self.get_logger().info(
@@ -1464,9 +1474,10 @@ class ControllerNode(Node):
                             )
                     else:
                         if self.debug_mode and self.control_counter % 40 == 0:
+                            reason = ("large heading error" if _large_heading_error
+                                      else f"|w|={abs(w):.3f} >= {_angular_threshold_for_min_vel}")
                             self.get_logger().info(
-                                f"🔄 DWA min_linear_vel clamp skipped (|w|={abs(w):.3f} "
-                                f">= {_angular_threshold_for_min_vel}, preventing circular motion)"
+                                f"🔄 DWA min_linear_vel clamp skipped ({reason}, preventing circular motion)"
                             )
                     
                 v, w = self.apply_motion_limits(v, w)

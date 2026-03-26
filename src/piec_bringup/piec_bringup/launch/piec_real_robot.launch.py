@@ -267,7 +267,7 @@ def generate_launch_description():
             "heading_kp": 1.5,
             "heading_deadband_deg": 2.0,
             "max_heading_rate": 0.6,
-            "rotate_in_place_angle_deg": 180.0,
+            "rotate_in_place_angle_deg": 60.0,
             "goal_stability_time": 2.0,
         }],
     )
