@@ -21,7 +21,7 @@ from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import Twist, PoseStamped, Pose
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseArray  # ADDED THIS IMPORT
-from std_msgs.msg import String           # for /emergency_stop/reason
+from std_msgs.msg import String, Float64MultiArray   # for /emergency_stop/reason and /ukf/health
 # Try to import the correct PINN service
 try:
     from piec_pinn_surrogate_msgs.srv import EvaluateTrajectory
@@ -212,6 +212,19 @@ class ControllerNode(Node):
         # Track last emergency stop reason received from the e-stop node
         self._last_estop_reason = ''
 
+        # ── UKF health state ─────────────────────────────────────────────────
+        # Filled by /ukf/health callback: [trace, is_healthy, max_eig, mahalanobis]
+        self._ukf_trace: float = 0.0
+        self._ukf_healthy: bool = True  # assume healthy until first health msg
+
+        # ── Zero-velocity watchdog ───────────────────────────────────────────
+        # When DWA outputs v≈0 for longer than _zero_vel_watchdog_timeout seconds
+        # and heading error is large, force a rotation-in-place to break the deadlock.
+        self._zero_vel_watchdog_start: float = 0.0   # wall-clock of first v=0 cmd
+        self._zero_vel_watchdog_timeout: float = 2.0  # seconds before forcing rotation
+        self._watchdog_rotating: bool = False          # True while watchdog is rotating
+        self._watchdog_last_warn_time: float = 0.0    # throttle watchdog log
+
         # QoS Settings
         scan_qos = QoSProfile(
             depth=20,
@@ -228,6 +241,11 @@ class ControllerNode(Node):
         self.create_subscription(
             String, '/emergency_stop/reason',
             self._estop_reason_callback, 10
+        )
+        # Subscribe to UKF health for covariance-aware gating
+        self.create_subscription(
+            Float64MultiArray, '/ukf/health',
+            self._ukf_health_callback, 10
         )
 
         # Publishers
@@ -513,6 +531,13 @@ class ControllerNode(Node):
                 'EMERGENCY_STOP', 0.0, 0.0, heading_err,
                 self.obstacle_distance,
             )
+
+    def _ukf_health_callback(self, msg: Float64MultiArray):
+        """Store UKF health data: [trace, is_healthy, max_eigenvalue, mahalanobis]."""
+        if len(msg.data) >= 2:
+            self._ukf_trace = float(msg.data[0])
+            self._ukf_healthy = bool(msg.data[1] > 0.5)
+
         """Load parameters from YAML configuration file"""
         config_path = os.path.join(
             get_package_share_directory('piec_controller'),
@@ -1753,6 +1778,12 @@ class ControllerNode(Node):
 
                 v, w = self.apply_reactive_speed_scaling(v, w)
 
+                # ── Zero-velocity watchdog ────────────────────────────────────
+                # If DWA keeps commanding v≈0 (and emergency stop is NOT active)
+                # for longer than the watchdog timeout, force a rotation-in-place
+                # so the robot can re-align before trying to move.
+                v, w = self._apply_zero_vel_watchdog(v, w, x, y, yaw)
+
                 self.update_statistics(v)
                 self.publish_cmd(float(v), float(w))
                 
@@ -1855,6 +1886,9 @@ class ControllerNode(Node):
 
             # Reactive speed scaling: zone-based v scaling, w preserved
             v, w = self.apply_reactive_speed_scaling(v, w)
+
+            # ── Zero-velocity watchdog ────────────────────────────────────────
+            v, w = self._apply_zero_vel_watchdog(v, w, x, y, yaw)
 
             self.update_statistics(v)
             self.publish_cmd(float(v), float(w))
@@ -2139,6 +2173,69 @@ class ControllerNode(Node):
         
         return False
 
+
+    # Watchdog constants – kept as class-level to be easy to tune.
+    _WATCHDOG_MIN_HEADING_ERROR = math.radians(20)  # trigger only above this heading error
+    _WATCHDOG_W_SCALE = 0.6                         # fraction of max_w for forced rotation
+    _WATCHDOG_HEADING_GAIN = 0.8                    # proportional gain on heading error
+
+    def _apply_zero_vel_watchdog(self, v: float, w: float,
+                                  x: float, y: float, yaw: float):
+        """Zero-velocity watchdog: force rotation-in-place when v≈0 persists too long.
+
+        When DWA/simple-control has been producing v≈0 for longer than
+        ``_zero_vel_watchdog_timeout`` seconds AND the heading error to the goal
+        is large, the robot is likely stuck in a local minimum.  We override the
+        command with a pure rotation toward the goal to break the deadlock.
+
+        The watchdog is suppressed when:
+        - Emergency stop is active (obstacle_detected and obstacle_distance < stop_dist)
+        - Goal is not set or already reached
+        """
+        _is_estop = (self.obstacle_detected and
+                     self.obstacle_distance < getattr(self, 'emergency_stop_distance', 0.55))
+        if _is_estop or self.goal_reached or self.goal_position is None:
+            self._zero_vel_watchdog_start = 0.0
+            self._watchdog_rotating = False
+            return v, w
+
+        # Compute heading error to goal
+        gx, gy = self.goal_position
+        goal_dir = math.atan2(gy - y, gx - x)
+        heading_err = abs(math.atan2(math.sin(goal_dir - yaw),
+                                     math.cos(goal_dir - yaw)))
+        signed_heading_err = math.atan2(math.sin(goal_dir - yaw),
+                                        math.cos(goal_dir - yaw))
+
+        now = time.monotonic()
+        _v_near_zero = abs(v) < 0.05 and abs(w) < 0.05
+
+        if _v_near_zero:
+            if self._zero_vel_watchdog_start == 0.0:
+                self._zero_vel_watchdog_start = now
+            elapsed = now - self._zero_vel_watchdog_start
+            if elapsed >= self._zero_vel_watchdog_timeout:
+                if heading_err > self._WATCHDOG_MIN_HEADING_ERROR:
+                    # Force rotation toward goal
+                    forced_w = math.copysign(
+                        min(self.max_angular_vel * self._WATCHDOG_W_SCALE,
+                            heading_err * self._WATCHDOG_HEADING_GAIN),
+                        signed_heading_err
+                    )
+                    if now - self._watchdog_last_warn_time >= 5.0:
+                        self._watchdog_last_warn_time = now
+                        self.get_logger().warn(
+                            f"🔁 Zero-vel watchdog: v=0 for {elapsed:.1f}s, "
+                            f"heading_err={math.degrees(heading_err):.1f}° → forcing w={forced_w:.2f}"
+                        )
+                    self._watchdog_rotating = True
+                    return 0.0, forced_w
+        else:
+            # Non-zero command → reset watchdog
+            self._zero_vel_watchdog_start = 0.0
+            self._watchdog_rotating = False
+
+        return v, w
 
     def apply_enhanced_speed_limit(self, velocity, angular_velocity):
         """Enhanced speed limiting with free space consideration - MAX SPEED in open space"""
