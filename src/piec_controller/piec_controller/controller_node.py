@@ -84,7 +84,9 @@ class ControllerNode(Node):
         
         # Load parameters from YAML file
         self.load_parameters_from_yaml()
-
+       # --- FIX: ensure use_dwa is defined ---
+        if not hasattr(self, 'use_dwa'):
+            self.use_dwa = self.get_parameter('use_dwa').value
         # Initialize state variables
         self.path = None
         self.odom = None
@@ -261,7 +263,189 @@ class ControllerNode(Node):
         self.get_logger().info("🚀 Enhanced PIEC Controller READY with Improved Free Space Navigation")
         self.get_logger().info(f"Stuck detection: {self.stuck_threshold_distance}m movement in {self.stuck_threshold_time}s")
         self.get_logger().info("🛑 Emergency Stop node started, output to /cmd_vel")
+    def load_parameters_from_yaml(self):
+        """Load parameters from YAML configuration file"""
+        config_path = os.path.join(
+            get_package_share_directory('piec_controller'),
+            'config',
+            'controller_params.yaml'
+        )
 
+        # Default parameters
+        params = {
+            # Speed Parameters
+            'max_linear_vel': 1.0,
+            'max_angular_vel': 0.7,
+            'min_linear_vel': 0.05,
+            'acceleration_limit': 0.8,
+            'deceleration_limit': 1.2,
+
+            # Safety Parameters
+            'emergency_stop_distance': 0.60,
+            'slow_down_distance': 0.90,
+            'safe_distance': 1.50,
+            'obstacle_clearance': 0.5,
+            'lateral_safety_margin': 0.4,
+
+            # Path Following
+            'waypoint_tolerance': 0.3,
+            'path_timeout': 20.0,
+            'lookahead_distance': 0.8,
+            'adaptive_lookahead': True,
+            'path_replan_distance': 1.0,
+
+            # Recovery Parameters
+            'recovery_timeout': 5.0,
+            'stuck_threshold': 1.5,
+            'stuck_time': 8.0,
+            'enable_stuck_recovery': True,
+            'max_backup_distance': 1.2,
+            'recovery_turn_angle': 75.0,
+
+            # DWA Parameters
+            'dwa_max_v': 1.0,
+            'dwa_min_v': 0.05,
+            'dwa_max_w': 0.7,
+            'dwa_sim_time': 1.5,
+            'dwa_dt': 0.04,
+            'dwa_clearance_weight': 3.0,
+
+            # Control Parameters
+            'control_frequency': 20.0,
+            'debug_mode': True,
+            'require_explicit_goal': False,
+            'enable_obstacle_memory': False,
+            
+            # Goal completion parameters
+            'goal_completion_distance': 0.25,
+            'goal_completion_angular_tolerance': 0.15,
+            'min_stop_time': 1.5,
+            'goal_stability_time': 2.0,
+            
+            # Heading control parameters
+            'heading_kp': 1.5,
+            'heading_deadband_deg': 2.0,
+            'max_heading_rate': 0.6,
+            'rotate_in_place_angle_deg': 60.0,
+            'rotation_timeout': 5.0,
+            'rotation_direction_lock_duration': 2.0,
+            'rotation_min_angle_for_lock_deg': 10.0,
+            'close_range_distance': 0.5,
+            'rotate_free_space_threshold': 1.5,
+            
+            # Path validation parameters
+            'path_staleness_threshold': 1.0,
+            'path_staleness_warning_threshold': 0.3,
+            
+            # Control mode
+            'use_dwa': True,
+            
+            # Stuck detection
+            'stuck_threshold_distance': 0.08,
+            'stuck_threshold_time': 8.0,
+            'recovery_duration': 4.0,
+            'obstacle_check_distance': 0.8,
+            'min_obstacle_presence': 3,
+            
+            # Free space parameters
+            'free_space_min_clearance': 0.8,
+            'free_space_update_rate': 3.0,
+            'prefer_free_space_turns': True,
+            'use_pinn_in_controller': False,
+            'scan_topic': '/scan',
+            'path_topic': '/piec/path',
+
+            # Reactive speed scaling parameters
+            'reactive_risk_zone_dist': 0.3,
+            'reactive_safety_zone_dist': 1.0,
+            'reactive_hysteresis_factor': 0.15,
+            'reactive_approach_gain': 2.0,
+            'reactive_approach_threshold': -0.1,
+        }
+
+        # Load from YAML if file exists
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as file:
+                    yaml_params = yaml.safe_load(file)
+                    if yaml_params and '/**' in yaml_params and 'ros__parameters' in yaml_params['/**']:
+                        params.update(yaml_params['/**']['ros__parameters'])
+                self.get_logger().info(f"✅ Loaded parameters from: {config_path}")
+            except Exception as e:
+                self.get_logger().warn(f"⚠️ Failed to load YAML: {e}, using defaults")
+
+        # Declare all parameters
+        for key, value in params.items():
+            self.declare_parameter(key, value)
+
+        # Store as instance variables
+        self.max_linear_vel = float(self.get_parameter('max_linear_vel').value)
+        self.max_angular_vel = float(self.get_parameter('max_angular_vel').value)
+        self.min_linear_vel = float(self.get_parameter('min_linear_vel').value)
+        self.acceleration_limit = float(self.get_parameter('acceleration_limit').value)
+        self.deceleration_limit = float(self.get_parameter('deceleration_limit').value)
+        self.emergency_stop_distance = float(self.get_parameter('emergency_stop_distance').value)
+        self.slow_down_distance = float(self.get_parameter('slow_down_distance').value)
+        self.safe_distance = float(self.get_parameter('safe_distance').value)
+        self.obstacle_clearance = float(self.get_parameter('obstacle_clearance').value)
+        self.lateral_safety_margin = float(self.get_parameter('lateral_safety_margin').value)
+        self.waypoint_tolerance = float(self.get_parameter('waypoint_tolerance').value)
+        self.path_timeout = float(self.get_parameter('path_timeout').value)
+        self.lookahead_distance = float(self.get_parameter('lookahead_distance').value)
+        self.adaptive_lookahead = self.get_parameter('adaptive_lookahead').value
+        self.path_replan_distance = float(self.get_parameter('path_replan_distance').value)
+        self.recovery_timeout = float(self.get_parameter('recovery_timeout').value)
+        self.stuck_threshold = float(self.get_parameter('stuck_threshold').value)
+        self.stuck_time = float(self.get_parameter('stuck_time').value)
+        self.enable_stuck_recovery = self.get_parameter('enable_stuck_recovery').value
+        self.max_backup_distance = float(self.get_parameter('max_backup_distance').value)
+        self.recovery_turn_angle = float(self.get_parameter('recovery_turn_angle').value)
+        self.control_frequency = float(self.get_parameter('control_frequency').value)
+        self.debug_mode = self.get_parameter('debug_mode').value
+        self.require_explicit_goal = self.get_parameter('require_explicit_goal').value
+        
+        # Goal completion parameters
+        self.goal_completion_distance = float(self.get_parameter('goal_completion_distance').value)
+        self.goal_stability_time = float(self.get_parameter('goal_stability_time').value)
+        
+        # Heading control parameters
+        self.heading_kp = float(self.get_parameter('heading_kp').value)
+        self.heading_deadband_deg = float(self.get_parameter('heading_deadband_deg').value)
+        self.max_heading_rate = float(self.get_parameter('max_heading_rate').value)
+        self.rotate_in_place_angle_deg = float(self.get_parameter('rotate_in_place_angle_deg').value)
+        self.rotation_timeout = float(self.get_parameter('rotation_timeout').value)
+        self.rotation_direction_lock_duration = float(self.get_parameter('rotation_direction_lock_duration').value)
+        self.rotation_min_angle_for_lock_deg = float(self.get_parameter('rotation_min_angle_for_lock_deg').value)
+        self.close_range_distance = float(self.get_parameter('close_range_distance').value)
+        self.rotate_free_space_threshold = float(self.get_parameter('rotate_free_space_threshold').value)
+        
+        # Path validation parameters
+        self.path_staleness_threshold = float(self.get_parameter('path_staleness_threshold').value)
+        self.path_staleness_warning_threshold = float(self.get_parameter('path_staleness_warning_threshold').value)
+        
+        # Control mode
+        self.use_dwa = self.get_parameter('use_dwa').value
+        
+        # Stuck detection
+        self.stuck_threshold_distance = float(self.get_parameter('stuck_threshold_distance').value)
+        self.stuck_threshold_time = float(self.get_parameter('stuck_threshold_time').value)
+        self.recovery_duration = float(self.get_parameter('recovery_duration').value)
+        self.obstacle_check_distance = float(self.get_parameter('obstacle_check_distance').value)
+        self.min_obstacle_presence = int(self.get_parameter('min_obstacle_presence').value)
+        
+        # Free space parameters
+        self.free_space_min_clearance = float(self.get_parameter('free_space_min_clearance').value)
+        self.free_space_update_rate = float(self.get_parameter('free_space_update_rate').value)
+        self.prefer_free_space_turns = self.get_parameter('prefer_free_space_turns').value
+        self.scan_topic = self.get_parameter('scan_topic').value
+        self.path_topic = self.get_parameter('path_topic').value
+
+        # Reactive speed scaling parameters
+        self.reactive_risk_zone_dist = float(self.get_parameter('reactive_risk_zone_dist').value)
+        self.reactive_safety_zone_dist = float(self.get_parameter('reactive_safety_zone_dist').value)
+        self.reactive_hysteresis_factor = float(self.get_parameter('reactive_hysteresis_factor').value)
+        self.reactive_approach_gain = float(self.get_parameter('reactive_approach_gain').value)
+        self.reactive_approach_threshold = float(self.get_parameter('reactive_approach_threshold').value)
     # ── CSV Diagnostics Logger ────────────────────────────────────────────────
 
     def _init_csv_logger(self):
@@ -342,8 +526,8 @@ class ControllerNode(Node):
             'max_linear_vel': 1.0,
             'max_angular_vel': 0.7,
             'min_linear_vel': 0.05,
-            'acceleration_limit': 0.8,
-            'deceleration_limit': 1.2,
+            'acceleration_limit': 2.0,
+            'deceleration_limit': 2.0,
 
             # Safety Parameters
             'emergency_stop_distance': 0.60,
