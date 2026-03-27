@@ -52,8 +52,8 @@ from uncertainty_aware import UncertaintyAwarePlanner
 from nsga2 import fast_non_dominated_sort, crowding_distance, nsga2_selection
 
 # Path validation constants
-PATH_START_DEVIATION_THRESHOLD = 0.1  # meters - threshold for auto-correcting path start
-PATH_START_WARNING_THRESHOLD = 0.2  # meters - threshold for logging warnings
+PATH_START_DEVIATION_THRESHOLD = 0.3  # meters – snap path start when deviation exceeds this
+PATH_START_WARNING_THRESHOLD = 0.5    # meters – log a warn for moderate deviations
 # When the nearest waypoint on the stale path exceeds this distance from the robot,
 # generate a fresh quick path instead of trimming the stale path.
 PATH_REPLAN_NEAREST_WAYPOINT_DIST = 0.5  # metres
@@ -100,9 +100,12 @@ class CompletePathOptimizer(Node):
         self.optimization_active = False
         self.optimization_count = 0
         self.last_optimization_time = 0.0
-        # Path update throttling - BUG FIX to prevent frequent regeneration
+        # Path update throttling - only regenerate if robot moved significantly.
+        # Raising from 0.3 m → 0.5 m reduces churn: at planning_rate=2.5 Hz
+        # (0.4 s intervals) and v≈0.5 m/s the robot moves ~0.2 m per cycle so
+        # a 0.5 m threshold means one regeneration roughly every 2 timer cycles.
         self.last_path_position = None  # Track last position when path was generated
-        self.path_update_distance_threshold = 0.3  # Only regenerate if moved > 30cm
+        self.path_update_distance_threshold = 0.5  # Only regenerate if moved > 50 cm
         # ADD THESE ATTRIBUTES (PINN tracking):
         self.pinn_call_count = 0
         self.pinn_timeout_count = 0

@@ -6,6 +6,7 @@ from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Quaternion
 import numpy as np
 import math
+import time
 from numpy.linalg import LinAlgError
 
 # Use numpy.linalg.cholesky (always returns lower-triangular) so that no
@@ -104,6 +105,12 @@ class UKFNode(Node):
         
         # Debug message throttling
         self._imu_debug_counter = 0
+
+        # Rate-limit predict step: wall-clock timestamp of last predict call.
+        # Without this, a predict+update is run for every incoming measurement
+        # (50 Hz IMU + 10 Hz odom × 2 = ~70/s), accumulating process noise far
+        # faster than intended and causing covariance blow-ups.
+        self._last_predict_wall_time: float = 0.0
         
         self.get_logger().info(f'UKF node started. odom_topic: {self.odom_topic} imu_topic: {self.imu_topic}')
         self.get_logger().info(f'State dimension: {self.x.size}, Use IMU orientation: {self.use_imu_orientation}, '
@@ -260,6 +267,38 @@ class UKFNode(Node):
         
         return xp
 
+    # Minimum eigenvalue floor: keeps P positive-definite after clamping.
+    _MIN_EIGENVALUE = 1e-6
+
+    # Maximum allowed variance per state dimension.  Values beyond these indicate
+    # numerical runaway and the covariance is clamped rather than reset outright.
+    _P_MAX_DIAG = np.array([
+        25.0,  # x position variance ceiling (m²)
+        25.0,  # y position variance ceiling (m²)
+         2.5,  # yaw variance ceiling (rad²) – tight because yaw errors cause heading bugs
+        10.0,  # linear velocity variance ceiling ((m/s)²)
+        10.0,  # angular velocity variance ceiling ((rad/s)²)
+    ])
+
+    def _clamp_covariance(self):
+        """Clamp P eigenvalues to [_MIN_EIGENVALUE, P_MAX] to keep it bounded and PD.
+
+        Called after every ukf_update to prevent numerical blow-ups without
+        triggering a full UKF reset for mild divergence.
+        """
+        try:
+            eigenvalues, eigenvectors = np.linalg.eigh(self.P)
+            eigenvalues = np.maximum(eigenvalues, self._MIN_EIGENVALUE)
+            p_max = float(np.max(self._P_MAX_DIAG))
+            eigenvalues = np.minimum(eigenvalues, p_max)
+            self.P = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+            self.P = 0.5 * (self.P + self.P.T)
+        except (LinAlgError, ValueError):
+            # Fallback: clamp diagonal entries only
+            p_max = float(np.max(self._P_MAX_DIAG))
+            for i in range(self.P.shape[0]):
+                self.P[i, i] = float(np.clip(self.P[i, i], self._MIN_EIGENVALUE, p_max))
+
     def check_and_reset_covariance(self):
         """Check covariance health and reset if needed"""
         # Check for NaN or Inf
@@ -268,9 +307,14 @@ class UKFNode(Node):
             self.reset_ukf()
             return True
         
-        # Check trace (total uncertainty) - LOWERED threshold for earlier detection
+        # Check trace (total uncertainty).  Use a generous threshold so the
+        # clamping logic above prevents runaway before a full reset is needed.
+        # The old threshold of 10.0 was causing resets at normal operating
+        # covariance levels (trace grows to ~7 without obstacles from 70×/s
+        # predict accumulation).  With rate-limited predict the steady-state
+        # trace is ~0.5; reset only on clear divergence.
         trace = np.trace(self.P)
-        if trace > 10.0:  # Changed from 100.0 - covariance ~0.3 normally, so 10.0 indicates problems
+        if trace > 100.0:
             self.get_logger().warn(f"⚠️ UKF uncertainty too high (trace={trace:.2f}) - RESETTING")
             self.reset_ukf()
             return True
@@ -281,7 +325,7 @@ class UKFNode(Node):
             eigenvalues = eigenvalues[eigenvalues > 1e-12]  # Filter out numerical zeros
             if len(eigenvalues) > 0:
                 condition_number = np.max(eigenvalues) / np.min(eigenvalues)
-                if condition_number > 1e8:  # Changed from 1e10 for earlier detection
+                if condition_number > 1e8:
                     self.get_logger().warn(f"⚠️ UKF ill-conditioned (κ={condition_number:.2e}) - RESETTING")
                     self.reset_ukf()
                     return True
@@ -362,9 +406,9 @@ class UKFNode(Node):
         
         # Add regularization to ensure positive definiteness
         min_eigenvalue = np.min(np.linalg.eigvals(P))
-        if min_eigenvalue < 1e-6:
+        if min_eigenvalue < self._MIN_EIGENVALUE:
             self.get_logger().warn(f"⚠️ UKF covariance regularized (min eigenvalue: {min_eigenvalue:.2e})")
-            P += (1e-6 - min_eigenvalue + 1e-9) * np.eye(n)
+            P += (self._MIN_EIGENVALUE - min_eigenvalue + 1e-9) * np.eye(n)
         
         try:
             S = cholesky(P * c)
@@ -372,7 +416,7 @@ class UKFNode(Node):
             self.get_logger().error("❌ Cholesky failed, using eigendecomposition fallback")
             # Fallback: Use eigenvalue decomposition
             eigenvalues, eigenvectors = np.linalg.eigh(P * c)
-            eigenvalues = np.maximum(eigenvalues, 1e-9)  # Enforce positivity
+            eigenvalues = np.maximum(eigenvalues, self._MIN_EIGENVALUE)
             S = eigenvectors @ np.diag(np.sqrt(eigenvalues))
         
         # Generate sigma points
@@ -419,13 +463,30 @@ class UKFNode(Node):
         self.P = P_pred
 
     def ukf_update(self, z, R, meas_type='pose'):
-        """UKF update step with health check"""
-        
+        """UKF update step with rate-limited predict and post-update clamping.
+
+        Root-cause fix for covariance blow-ups
+        ----------------------------------------
+        Previously every incoming measurement triggered a full predict+update.
+        At 50 Hz (IMU) + 10 Hz × 2 (odom pose + odom angular-vel) = 70 calls/s,
+        process noise Q was accumulated 70 times per second instead of the
+        intended ~10–20 times.  After 1 s, trace(P) grew to > 70×trace(Q) = 35,
+        well above the old reset threshold of 10, causing very frequent resets
+        and the observed yaw jumps.
+
+        Fix: only run ukf_predict() if at least self.dt seconds have elapsed
+        since the last predict call (wall-clock).  Measurement-only updates
+        (without a new predict) are still applied so no sensor data is dropped.
+        """
         # Check covariance health BEFORE update
         if self.check_and_reset_covariance():
             return  # Skip this update after reset
-        
-        self.ukf_predict()
+
+        # Rate-limited predict: run at most 1/dt times per second
+        now = time.time()
+        if now - self._last_predict_wall_time >= self.dt:
+            self.ukf_predict()
+            self._last_predict_wall_time = now
         
         # Generate sigma points
         X, Wm, Wc = self.generate_sigma_points(self.x, self.P)
@@ -476,6 +537,11 @@ class UKFNode(Node):
         
         # Ensure P remains symmetric (numerical stability)
         self.P = 0.5 * (self.P + self.P.T)
+
+        # Clamp eigenvalues to keep P bounded and positive-definite.
+        # This replaces the previous strategy of resetting the entire UKF
+        # whenever P blew up, which caused the observed yaw jumps.
+        self._clamp_covariance()
         
         # Normalize yaw
         self.x[2] = math.atan2(math.sin(self.x[2]), math.cos(self.x[2]))

@@ -331,7 +331,11 @@ class DynamicDWAComplete:
         
         if effective_min < self.emergency_distance:
             max_v = 0.0
-            max_w = 0.0
+            # Do NOT zero out max_w: allow rotation so the robot can escape by
+            # turning away from the obstacle.  The emergency_stop node already
+            # blocks forward motion; keeping max_w non-zero lets DWA select a
+            # pure-rotation trajectory that brings the robot to face clear space.
+            max_w = min(max_w, 0.3)
         elif effective_min < 0.4:
             max_v = min(max_v, 0.25)
             max_w = min(max_w, 0.3)
