@@ -20,6 +20,10 @@ ROTATION_THRESHOLD_CLOSE_ANGLE = 30     # Rotation threshold when close to goal 
 # Maximum rotation time before forcing forward motion (seconds)
 MAX_ROTATION_TIME = 5.0
 
+# Fallback rotation scaling constants
+_FALLBACK_W_SCALE = 0.5       # fraction of max_w used in forced/fallback rotations
+_FALLBACK_HEADING_GAIN = 0.8  # proportional gain on heading error for rotation magnitude
+
 
 class DynamicDWAComplete:
     def __init__(self, node, emergency_distance=0.2):
@@ -260,7 +264,7 @@ class DynamicDWAComplete:
                         math.cos(goal_dir_world - theta)
                     )
                     forced_w = math.copysign(
-                        min(self.max_w * 0.5, abs(heading_diff) * 0.7),
+                        min(self.max_w * _FALLBACK_W_SCALE, abs(heading_diff) * 0.7),
                         heading_diff
                     )
                     if hasattr(self.node, 'debug_mode') and self.node.debug_mode:
@@ -287,7 +291,7 @@ class DynamicDWAComplete:
                     math.cos(goal_dir_world - theta)
                 )
                 forced_w = math.copysign(
-                    min(self.max_w * 0.5, abs(heading_diff) * 0.8),
+                    min(self.max_w * _FALLBACK_W_SCALE, abs(heading_diff) * _FALLBACK_HEADING_GAIN),
                     heading_diff
                 )
                 if not self._low_score_fallback_active:

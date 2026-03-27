@@ -2174,6 +2174,11 @@ class ControllerNode(Node):
         return False
 
 
+    # Watchdog constants – kept as class-level to be easy to tune.
+    _WATCHDOG_MIN_HEADING_ERROR = math.radians(20)  # trigger only above this heading error
+    _WATCHDOG_W_SCALE = 0.6                         # fraction of max_w for forced rotation
+    _WATCHDOG_HEADING_GAIN = 0.8                    # proportional gain on heading error
+
     def _apply_zero_vel_watchdog(self, v: float, w: float,
                                   x: float, y: float, yaw: float):
         """Zero-velocity watchdog: force rotation-in-place when v≈0 persists too long.
@@ -2186,7 +2191,6 @@ class ControllerNode(Node):
         The watchdog is suppressed when:
         - Emergency stop is active (obstacle_detected and obstacle_distance < stop_dist)
         - Goal is not set or already reached
-        - UKF reports unhealthy (stale heading is not reliable)
         """
         _is_estop = (self.obstacle_detected and
                      self.obstacle_distance < getattr(self, 'emergency_stop_distance', 0.55))
@@ -2211,10 +2215,11 @@ class ControllerNode(Node):
                 self._zero_vel_watchdog_start = now
             elapsed = now - self._zero_vel_watchdog_start
             if elapsed >= self._zero_vel_watchdog_timeout:
-                if heading_err > math.radians(20):
+                if heading_err > self._WATCHDOG_MIN_HEADING_ERROR:
                     # Force rotation toward goal
                     forced_w = math.copysign(
-                        min(self.max_angular_vel * 0.6, heading_err * 0.8),
+                        min(self.max_angular_vel * self._WATCHDOG_W_SCALE,
+                            heading_err * self._WATCHDOG_HEADING_GAIN),
                         signed_heading_err
                     )
                     if now - self._watchdog_last_warn_time >= 5.0:

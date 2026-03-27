@@ -62,6 +62,8 @@ PATH_REJECT_DEVIATION_THRESHOLD = 0.5    # metres
 PATH_REJECT_YAW_ERROR_THRESHOLD = math.radians(30)  # 30°
 # Minimum interval between path-start-deviation warnings to avoid log spam
 PATH_DEVIATION_WARN_COOLDOWN = 5.0  # seconds
+# Maximum wait time in PINN exponential backoff (seconds)
+PINN_MAX_BACKOFF_SEC = 60.0
 
 # Curved path preservation constants
 MIN_TURN_CURVATURE_THRESHOLD = 0.3  # minimum curvature for a valid turning path
@@ -505,7 +507,7 @@ class CompletePathOptimizer(Node):
                 self.pinn_consecutive_failures += 1
                 future.cancel()
                 # Exponential backoff: wait 2^k seconds before trying PINN again
-                backoff_sec = min(60.0, 2.0 ** self.pinn_consecutive_failures)
+                backoff_sec = min(PINN_MAX_BACKOFF_SEC, 2.0 ** self.pinn_consecutive_failures)
                 self.pinn_backoff_until = time.time() + backoff_sec
                 if self.pinn_consecutive_failures >= self.pinn_max_consecutive_failures:
                     if not self.pinn_disabled_logged:
