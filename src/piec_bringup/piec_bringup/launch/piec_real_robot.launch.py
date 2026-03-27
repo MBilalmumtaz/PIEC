@@ -203,44 +203,6 @@ def generate_launch_description():
     )
     ld.add_action(ukf_localization_node)
 
-    # ------------------------------------------------------------------
-    # 6.3b QoS fix: pointcloud_to_laserscan
-    # The rslidar driver publishes PointCloud2 with BEST_EFFORT QoS.
-    # pointcloud_to_laserscan must therefore subscribe with BEST_EFFORT
-    # and publish /scan with the same profile so all downstream consumers
-    # (controller, emergency_stop) can receive it without QoS warnings.
-    # If the hardware bringup already launches pointcloud_to_laserscan,
-    # you can remove this block – but ensure its QoS matches.
-    # ------------------------------------------------------------------
-    pointcloud_to_laserscan_node = Node(
-        package='pointcloud_to_laserscan',
-        executable='pointcloud_to_laserscan_node',
-        name='pointcloud_to_laserscan',
-        output='screen',
-        condition=IfCondition(use_lidar),
-        remappings=[
-            ('cloud_in', '/rslidar_points'),
-            ('scan', '/scan'),
-        ],
-        parameters=[{
-            'target_frame': 'laser',
-            'transform_tolerance': 0.01,
-            'min_height': -0.4,
-            'max_height': 1.5,
-            'angle_min': -3.14159,
-            'angle_max': 3.14159,
-            'angle_increment': 0.00581,
-            'scan_time': 0.1,
-            'range_min': 0.1,
-            'range_max': 50.0,
-            'use_inf': True,
-            # Match the rslidar driver's BEST_EFFORT publisher QoS
-            'qos_overrides./rslidar_points.reliability': 'best_effort',
-            'use_sim_time': use_sim_time,
-        }],
-    )
-    ld.add_action(pointcloud_to_laserscan_node)
-
     # 6.4 PINN‑Integrated Path Optimizer (uses /scan_processed)
     pinn_path_optimizer_node = Node(
         package="piec_path_optimizer",
@@ -307,8 +269,6 @@ def generate_launch_description():
             "max_heading_rate": 0.6,
             "rotate_in_place_angle_deg": 60.0,
             "goal_stability_time": 2.0,
-            # Zero-velocity watchdog: force rotation when v=0 persists > 2 s
-            "zero_vel_watchdog_timeout": 2.0,
         }],
     )
     ld.add_action(controller_node)
