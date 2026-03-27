@@ -80,6 +80,14 @@ class DynamicDWAComplete:
         # is the number of waypoints advanced since the last call.
         self._cached_nearest_path_idx = 0
 
+        # Consecutive low-score fallback: if DWA selects a trajectory with score
+        # below this epsilon for N consecutive cycles, fall back to pure rotation
+        # toward the goal direction to break local minima.
+        self._low_score_threshold = -1.0   # scores below this are considered "no progress"
+        self._low_score_cycle_count = 0
+        self._low_score_max_cycles = 5     # consecutive low-score cycles before fallback
+        self._low_score_fallback_active = False
+
         self.node.get_logger().info("Dynamic DWA Complete initialized with Free Space Awareness")
 
     def _get_min_forward_dist(self, scan_ranges, scan_angles, cone_half_angle=math.radians(45)):
@@ -263,7 +271,34 @@ class DynamicDWAComplete:
                         )
                     return 0.0, forced_w
                 return self.fallback_control(current_pose, path)
-            
+
+            # ── Consecutive low-score fallback ──────────────────────────────
+            # If the winning trajectory score is persistently near its floor
+            # (robot stuck in local minimum), override with pure rotation.
+            if best_score < self._low_score_threshold:
+                self._low_score_cycle_count += 1
+            else:
+                self._low_score_cycle_count = 0
+                self._low_score_fallback_active = False
+
+            if self._low_score_cycle_count >= self._low_score_max_cycles:
+                heading_diff = math.atan2(
+                    math.sin(goal_dir_world - theta),
+                    math.cos(goal_dir_world - theta)
+                )
+                forced_w = math.copysign(
+                    min(self.max_w * 0.5, abs(heading_diff) * 0.8),
+                    heading_diff
+                )
+                if not self._low_score_fallback_active:
+                    self._low_score_fallback_active = True
+                    if hasattr(self.node, 'debug_mode') and self.node.debug_mode:
+                        self.node.get_logger().warn(
+                            f'🔄 DWA low-score fallback ({self._low_score_cycle_count} cycles): '
+                            f'score={best_score:.3f} → pure rotation w={forced_w:.3f}'
+                        )
+                return 0.0, forced_w
+
             # Throttled diagnostics
             dbg = (hasattr(self.node, 'debug_mode') and self.node.debug_mode and
                    hasattr(self.node, 'control_counter') and self.node.control_counter % 50 == 0)

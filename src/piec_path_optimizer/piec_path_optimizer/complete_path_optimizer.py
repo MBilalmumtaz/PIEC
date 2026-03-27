@@ -57,6 +57,11 @@ PATH_START_WARNING_THRESHOLD = 0.5    # meters – log a warn for moderate devia
 # When the nearest waypoint on the stale path exceeds this distance from the robot,
 # generate a fresh quick path instead of trimming the stale path.
 PATH_REPLAN_NEAREST_WAYPOINT_DIST = 0.5  # metres
+# Reject a path entirely only when start deviation > this AND yaw error > this
+PATH_REJECT_DEVIATION_THRESHOLD = 0.5    # metres
+PATH_REJECT_YAW_ERROR_THRESHOLD = math.radians(30)  # 30°
+# Minimum interval between path-start-deviation warnings to avoid log spam
+PATH_DEVIATION_WARN_COOLDOWN = 5.0  # seconds
 
 # Curved path preservation constants
 MIN_TURN_CURVATURE_THRESHOLD = 0.3  # minimum curvature for a valid turning path
@@ -106,11 +111,18 @@ class CompletePathOptimizer(Node):
         # a 0.5 m threshold means one regeneration roughly every 2 timer cycles.
         self.last_path_position = None  # Track last position when path was generated
         self.path_update_distance_threshold = 0.5  # Only regenerate if moved > 50 cm
+        # Cooldown for path-start deviation warnings (avoids log spam while stationary)
+        self._last_deviation_warn_time: float = 0.0
         # ADD THESE ATTRIBUTES (PINN tracking):
         self.pinn_call_count = 0
         self.pinn_timeout_count = 0
         self.pinn_success_count = 0
         self.pinn_response_times = deque(maxlen=100)  # For tracking performance
+        # PINN exponential-backoff / auto-disable
+        self.pinn_consecutive_failures = 0
+        self.pinn_max_consecutive_failures = 5   # disable after this many consecutive timeouts
+        self.pinn_disabled_logged = False         # log the disable event only once
+        self.pinn_backoff_until: float = 0.0     # wall-clock time when backoff expires
         # Stuck detection - IMPROVED
         self.stuck_positions = deque(maxlen=25)
         self.stuck_threshold = 0.1
@@ -388,10 +400,14 @@ class CompletePathOptimizer(Node):
         return False
 # Update the call_pinn_service_optimized method to properly handle timeouts:
     def call_pinn_service_optimized(self, path_array):
-        """Call PINN service with proper timeout handling - FIXED VERSION"""
+        """Call PINN service with proper timeout handling and exponential backoff."""
         if not self.use_pinn or not self.pinn_service_available or self.pinn_client is None:
             if self.debug_mode:
                 self.get_logger().debug("PINN disabled or client not available")
+            return None
+
+        # Honour exponential backoff: skip PINN calls until backoff expires
+        if time.time() < self.pinn_backoff_until:
             return None
 
         # Wait for PINN to be ready
@@ -486,7 +502,19 @@ class CompletePathOptimizer(Node):
                 if self.debug_mode:
                     self.get_logger().debug(f"PINN call #{call_id} timeout after {timeout_sec}s")
                 self.pinn_timeout_count += 1
+                self.pinn_consecutive_failures += 1
                 future.cancel()
+                # Exponential backoff: wait 2^k seconds before trying PINN again
+                backoff_sec = min(60.0, 2.0 ** self.pinn_consecutive_failures)
+                self.pinn_backoff_until = time.time() + backoff_sec
+                if self.pinn_consecutive_failures >= self.pinn_max_consecutive_failures:
+                    if not self.pinn_disabled_logged:
+                        self.get_logger().warn(
+                            f"⚠️ PINN service timed out {self.pinn_consecutive_failures} times in a row – "
+                            "disabling PINN for this session and continuing without it."
+                        )
+                        self.pinn_disabled_logged = True
+                    self.pinn_service_available = False
                 return {
                     'energy': 0.0,
                     'stability': 0.0,
@@ -510,6 +538,13 @@ class CompletePathOptimizer(Node):
             if response is not None:
                 self.pinn_success_count += 1
                 self.pinn_response_times.append(response_time)
+                # Successful response – reset backoff state
+                self.pinn_consecutive_failures = 0
+                self.pinn_backoff_until = 0.0
+                if self.pinn_disabled_logged:
+                    self.get_logger().info("✅ PINN service recovered – re-enabling.")
+                    self.pinn_disabled_logged = False
+                    self.pinn_service_available = True
 
                 energy = float(response.energy)
                 stability = float(response.stability)
@@ -2804,7 +2839,10 @@ class CompletePathOptimizer(Node):
                     goal_pt = path_points[-1]
                     path_points = [(current_x, current_y), goal_pt]
 
-                if self.debug_mode:
+                # Throttle the warning: emit at most once per PATH_DEVIATION_WARN_COOLDOWN s
+                _now = time.time()
+                if _now - self._last_deviation_warn_time >= PATH_DEVIATION_WARN_COOLDOWN:
+                    self._last_deviation_warn_time = _now
                     self.get_logger().warn(
                         f"⚠️ Path start mismatch: deviation={start_deviation:.3f}m. "
                         f"Trimmed to waypoint {nearest_idx} (nearest dist={nearest_dist:.3f}m), "
@@ -2813,11 +2851,14 @@ class CompletePathOptimizer(Node):
             elif start_deviation > PATH_START_WARNING_THRESHOLD:
                 # Minor deviation: snap path[0] to current position without trimming
                 path_points = [(current_x, current_y)] + list(path_points[1:])
-                if self.debug_mode:
-                    self.get_logger().warn(
-                        f"Path start deviation: {start_deviation:.3f}m "
-                        f"(minor correction applied)"
-                    )
+                _now = time.time()
+                if _now - self._last_deviation_warn_time >= PATH_DEVIATION_WARN_COOLDOWN:
+                    self._last_deviation_warn_time = _now
+                    if self.debug_mode:
+                        self.get_logger().warn(
+                            f"Path start deviation: {start_deviation:.3f}m "
+                            f"(minor correction applied)"
+                        )
         
         # CRITICAL FIX 2: Ensure last point is actual goal
         if self.goal_position and len(path_points) > 0:

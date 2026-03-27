@@ -4,6 +4,7 @@ from rclpy.node import Node
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from geometry_msgs.msg import Quaternion
+from std_msgs.msg import Float64MultiArray
 import numpy as np
 import math
 import time
@@ -56,6 +57,8 @@ class UKFNode(Node):
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.odom_cb, 20)
         self.imu_sub = self.create_subscription(Imu, self.imu_topic, self.imu_cb, 50)
         self.pub = self.create_publisher(Odometry, self.pub_topic, 10)
+        # Health topic: [trace, is_healthy (1.0/0.0), max_eigenvalue, mahalanobis_last]
+        self.health_pub = self.create_publisher(Float64MultiArray, '/ukf/health', 10)
 
         # state: x, y, yaw, v, w (angular velocity)
         # CHANGED: Now 5 dimensions
@@ -111,6 +114,11 @@ class UKFNode(Node):
         # (50 Hz IMU + 10 Hz odom × 2 = ~70/s), accumulating process noise far
         # faster than intended and causing covariance blow-ups.
         self._last_predict_wall_time: float = 0.0
+
+        # Health tracking: last Mahalanobis distance (used in health topic)
+        self._last_mahalanobis: float = 0.0
+        # UKF is healthy when trace < 10 and no NaN/Inf
+        self._ukf_healthy: bool = False
         
         self.get_logger().info(f'UKF node started. odom_topic: {self.odom_topic} imu_topic: {self.imu_topic}')
         self.get_logger().info(f'State dimension: {self.x.size}, Use IMU orientation: {self.use_imu_orientation}, '
@@ -335,20 +343,26 @@ class UKFNode(Node):
         return False
 
     def reset_ukf(self):
-        """Reset UKF to initial state"""
-        self.get_logger().info("🔄 Resetting UKF state")
-        
-        # Reset state to current best estimate (keep position, reset velocities)
+        """Soft-reset UKF: re-seed covariance without altering current yaw.
+
+        Only velocities are zeroed so the controller does not receive a sudden
+        yaw jump.  Position is kept intact because odom drift is small compared
+        with a yaw flip.  Covariance is re-seeded to modest initial values so
+        the filter recovers quickly from divergence.
+        """
+        self.get_logger().info("🔄 Soft-resetting UKF covariance (yaw preserved)")
+
+        # Keep x[0..2] (x, y, yaw) unchanged to avoid heading jumps.
         self.x[3] = 0.0  # v = 0
         self.x[4] = 0.0  # w = 0
-        
-        # Reset covariance to initial values
+
+        # Re-seed covariance to modest initial values
         self.P = np.diag([
-            0.01,   # x variance
-            0.01,   # y variance  
-            0.01,   # yaw variance
-            0.1,    # v variance
-            0.1     # w variance
+            0.05,   # x variance (m²)
+            0.05,   # y variance (m²)
+            0.05,   # yaw variance (rad²) – modest so heading is trusted
+            0.1,    # v variance ((m/s)²)
+            0.05,   # w variance ((rad/s)²)
         ])
 
     def validate_measurement(self, z, z_pred, R):
@@ -360,11 +374,14 @@ class UKFNode(Node):
         # Mahalanobis distance
         S = R  # Measurement covariance
         try:
-            mahalanobis_dist = np.sqrt(innovation.T @ np.linalg.inv(S) @ innovation)
+            mahalanobis_dist = float(np.sqrt(innovation.T @ np.linalg.inv(S) @ innovation))
         except (LinAlgError, ValueError) as e:
             self.get_logger().warn(f"⚠️ Mahalanobis calculation failed: {e} - accepting measurement")
             return True  # If calculation fails, accept measurement
-        
+
+        # Store most recent Mahalanobis distance for health topic
+        self._last_mahalanobis = mahalanobis_dist
+
         # Adaptive threshold based on rejection rate
         base_threshold = 5.0  # Changed from 3.0
         rejection_rate = self.rejection_count / max(self.measurement_count, 1)
@@ -549,7 +566,7 @@ class UKFNode(Node):
         self.publish_ukf()
 
     def publish_ukf(self):
-        """Publish UKF odometry"""
+        """Publish UKF odometry and health."""
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'odom'
@@ -573,6 +590,24 @@ class UKFNode(Node):
         msg.pose.covariance = cov.tolist()
         
         self.pub.publish(msg)
+
+        # Publish health: [trace, is_healthy, max_eigenvalue, last_mahalanobis]
+        try:
+            trace = float(np.trace(self.P))
+            eigenvalues = np.linalg.eigvalsh(self.P)
+            max_eig = float(np.max(eigenvalues))
+            is_healthy = (
+                trace < 10.0
+                and not np.any(np.isnan(self.P))
+                and not np.any(np.isinf(self.P))
+            )
+            self._ukf_healthy = bool(is_healthy)
+            health_msg = Float64MultiArray()
+            health_msg.data = [trace, 1.0 if is_healthy else 0.0,
+                               max_eig, self._last_mahalanobis]
+            self.health_pub.publish(health_msg)
+        except Exception:
+            pass
 
     def yaw_to_quat(self, yaw):
         """Convert yaw to quaternion"""
