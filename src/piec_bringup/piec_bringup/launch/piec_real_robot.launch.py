@@ -123,7 +123,7 @@ def generate_launch_description():
     # 5. Scout Mini parameters (same as simulation, but speed limits may be reduced for safety)
     # ------------------------------------------------------------------
     scout_mini_params = {
-        "robot_radius": 0.3,
+        "robot_radius": 0.28,
         "wheel_radius": 0.16,
         "wheel_separation": 0.4563536,
         "wheel_base": 0.3132556,
@@ -203,6 +203,8 @@ def generate_launch_description():
     )
     ld.add_action(ukf_localization_node)
 
+
+
     # 6.4 PINN‑Integrated Path Optimizer (uses /scan_processed)
     pinn_path_optimizer_node = Node(
         package="piec_path_optimizer",
@@ -212,7 +214,7 @@ def generate_launch_description():
         condition=IfCondition(enable_piecnodes),
         parameters=[{
             **scout_mini_params,
-            "use_pinn_predictions": True,
+            "use_pinn_predictions": False,
             "pinn_service_name": "/evaluate_trajectory",
             "population_size": 15,
             "generations": 6,
@@ -246,9 +248,9 @@ def generate_launch_description():
             "max_linear_vel": 0.8,
             "min_linear_vel": 0.15,
             "max_angular_vel": 0.6,
-            "emergency_stop_distance": 0.9,
-            "slow_down_distance": 1.2,
-            "safe_distance": 1.5,
+            "emergency_stop_distance": 0.80,
+            "slow_down_distance": 0.90,
+            "safe_distance": 1.0,
             "waypoint_tolerance": 0.4,
             "lookahead_distance": 1.2,
             "control_frequency": 10.0,
@@ -262,13 +264,15 @@ def generate_launch_description():
             "odom_topic": "/ukf/odom",
             "scan_topic": "/scan",          # Use processed scan
             "use_sim_time": use_sim_time,
-            "use_dwa": True,                          # Same as simulation
+            "use_dwa": False,                          # Same as simulation
             "use_pinn_in_controller": False,
             "heading_kp": 1.5,
             "heading_deadband_deg": 2.0,
             "max_heading_rate": 0.6,
             "rotate_in_place_angle_deg": 60.0,
             "goal_stability_time": 2.0,
+            # Zero-velocity watchdog: force rotation when v=0 persists > 2 s
+            "zero_vel_watchdog_timeout": 2.0,
         }],
     )
     ld.add_action(controller_node)
@@ -284,11 +288,11 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(enable_piecnodes),
         parameters=[{
-            "stop_distance": 0.55,        # reduced from 0.9 – prevents false stops in corridors
+            "stop_distance": 0.80,        # reduced from 0.9 – prevents false stops in corridors
             "slow_distance": 0.90,
             "hysteresis_margin": 0.12,    # clear only when dist > stop_dist + margin
             "clear_count_threshold": 5,   # require 5 consecutive clear scans
-            "forward_cone_deg": 60.0,
+            "body_cone_deg": 35.0,              # ← corrected name
             "enable_emergency_stop": True,
             "use_sim_time": use_sim_time,
             "scan_topic": "/scan",
