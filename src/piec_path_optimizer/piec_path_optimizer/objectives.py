@@ -89,6 +89,36 @@ class ObjectiveEvaluator:
         self.max_history = 100
         self.fallback_count = 0
     
+    def evaluate(self, path_array):
+        """
+        Simple evaluate method for NSGA‑II compatibility.
+        Uses default values for obstacle_cost and uncertainty_cost.
+        Returns a list of 7 objectives.
+        """
+        if path_array is None or len(path_array) < 2:
+            return [float('inf')] * 7
+
+        # Compute obstacle cost using the node's method if available
+        if hasattr(self.node, 'get_enhanced_obstacle_cost'):
+            obstacle_cost = self.node.get_enhanced_obstacle_cost(path_array)
+        else:
+            obstacle_cost = 0.0
+
+        # Uncertainty cost – default 0 if not available
+        uncertainty_cost = 0.0
+
+        # Straight line length
+        start = path_array[0]
+        goal = path_array[-1]
+        straight_line_length = math.hypot(goal[0] - start[0], goal[1] - start[1])
+
+        # Use the existing method (returns a tuple)
+        obj_tuple = self.evaluate_all_objectives_with_timeout(
+            path_array, obstacle_cost, uncertainty_cost, straight_line_length,
+            use_pinn=True, timeout=0.5
+        )
+        # Convert to list (NSGA‑II expects a list)
+        return list(obj_tuple)
     def check_pinn_service(self):
         """Check if PINN service is available"""
         if self.client is None:
@@ -398,8 +428,11 @@ class ObjectiveEvaluator:
     
     def record_performance(self, objectives, fitness):
         """Record performance for analysis"""
+        # Convert tuple to list (or use list(objectives)) to avoid AttributeError
+        objectives_list = list(objectives) if isinstance(objectives, tuple) else objectives.copy() if hasattr(objectives, 'copy') else objectives
+        
         record = {
-            'objectives': objectives.copy(),
+            'objectives': objectives_list,
             'fitness': fitness,
             'timestamp': time.time()
         }
