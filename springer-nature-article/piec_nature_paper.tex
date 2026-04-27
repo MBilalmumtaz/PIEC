@@ -533,7 +533,7 @@ RRT*+MPC & 256.1 / 283.2 (+21\%) & 168.4 (4.5 Hz) & 96.4 & 0.64 / 0.60 \\
 NSGA-II-Std & 241.1 / -- (+14\%) & 341.7 (2.5 Hz) & 97.4 & 0.66 / -- \\
 \bottomrule
 \end{tabular}
-\end{table>}
+\end{table}
 
 These results establish that physics-informed learning provides a unique triple advantage validated by our theoretical foundations: (1) energy efficiency through dynamics-aware planning (21--33\% savings, validating Theorem 1's Pareto-incompatibility prediction), (2) real-time performance via fast neural inference (3.6× speedup vs. simulation, confirming Theorem 3's speedup-accuracy trade-off condition), and (3) safety/reliability through robust multi-objective optimization and precise localization (demonstrating Theorem 4's UKF linearization accuracy advantage)—capabilities unattainable with traditional geometric planners or purely reactive approaches.
 
@@ -919,6 +919,21 @@ Yang, X., Wei, M., Lai, Y. \& Ji, Z. {DDBot}: Differentiable physics-based diggi
 \bibitem{Manzinger2025reachable}
 Manzinger, S., Pek, C. \& Althoff, M. Using reachable sets for trajectory planning of automated vehicles.
 \textit{IEEE Trans. Intell. Veh.} \textbf{10}, 482--496 (2025).
+%%=============================================================%%
+%% FIGURE LEGENDS (Placeholders)
+%%=============================================================%%
+\section*{Figure Legends}
+
+\textbf{Figure 1 | PIEC system architecture.} Hierarchical control architecture showing five integrated modules: (a) Perception layer with RoboSense Helios-32 F70 LiDAR, LPMS IG1 CAN IMU, and wheel encoders. (b) UKF state estimation fusing odometry, IMU, and magnetometer at 20Hz. (c) NSGA-II path optimizer querying PINN surrogate to generate Pareto-optimal global paths at 1Hz. (d) PINN service responding to energy/stability queries within 5ms. (e) Proportional heading controller with embedded dynamic obstacle tracking and dedicated emergency stop safety interlock executing reactive path following at 20Hz. Information flow arrows indicate data dependencies and temporal rates.
+
+\textbf{Figure 2 | PINN training and validation results.} (a) Training curves: data loss, physics loss, and total loss over 200 epochs with early stopping at epoch 187. (b) Scatter plot of predicted vs. actual energy consumption on 10,000 test samples, with regression line (R²=0.98) and ±5\% error bands. (c) Residual distribution histogram showing Gaussian-like prediction errors centered at zero. (d) Prediction accuracy stratified by terrain type (concrete, carpet, uphill, downhill, grass) with MAPE and R² bars. (e) Inference time histogram showing mean 0.34ms with standard deviation 0.08ms.
+
+\textbf{Figure 3 | Energy efficiency comparison across methods.} (a) Grouped bar chart comparing total energy consumption for PIEC, A*+PID, RRT*+MPC, and NSGA-II-Standard across three environments (indoor corridor, cluttered office, outdoor campus) in simulation. Error bars: standard deviation. (b) Same comparison for real-world experimental trials. (c) Box plots of energy-per-meter (J/m) distributions showing PIEC median 36.1 J/m vs. A* 45.2 J/m (20.1\% reduction). (d) Cumulative energy consumption over mission time (0--150s) for representative trial, illustrating PIEC's consistently lower energy trajectory.
+
+\textbf{Figure 4 | Real-world deployment photographs.} (a) Custom differential-drive robot platform with labeled components: RoboSense Helios-32 F70 LiDAR (top-mounted), LPMS IG1 CAN IMU (internal), Intel i7 compute module, 4S LiPo battery, and motor controllers. (b) Robot navigating university corridor with dynamic pedestrian obstacles. (c) Outdoor plaza deployment with uneven terrain and variable lighting. (d) Parking lot scenario with static/dynamic obstacles (vehicles, trees). Scale bars: 0.5m (robot), 5m (environments).
+
+\textbf{Figure 5 | Pareto fronts from multi-objective optimization.} (a) 2D Pareto front projection showing energy vs. path length trade-off for NSGA-II final generation (40 individuals). Color gradient indicates front number (F1: red, F2: orange, F3: yellow). Selected solution (black star) balances objectives. Dominated solutions (gray dots) shown for reference. (b) Parallel coordinates plot visualizing all 7 objectives for Pareto-optimal solutions (F1 only): path length, curvature, obstacle cost, localization uncertainty, deviation, energy, stability. Lines color-coded by energy (blue: low, red: high). (c) Hypervolume indicator convergence over 12 generations comparing PIEC (with PINN), NSGA-II-Standard (with simulation), and single-objective baseline. PIEC converges 35\% faster. (d) 3D Pareto surface showing energy-length-safety trade-off manifold with selected solutions highlighted.
+
 \end{thebibliography}
 
 %%=============================================================%%
