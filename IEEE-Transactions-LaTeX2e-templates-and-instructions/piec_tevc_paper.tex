@@ -281,16 +281,19 @@ The seven objectives are:
               {\max(L_{\mathrm{straight}},0.1)}
        \label{eq:f5} \\
   f_6 &= E(\mathcal{P})
-       = \sum_{i=0}^{n-1}\hat{E}(x_i,y_i,\theta_i,v_i,\omega_i,\boldsymbol{\xi}_i)
+       = \sum_{i=0}^{n-1}\hat{E}(\boldsymbol{u}_i)
        \label{eq:f6} \\
   f_7 &= T(\mathcal{P})
-       = 1 - \frac{1}{n}\sum_{i=0}^{n-1}S(x_i,y_i,v_i,\boldsymbol{\xi}_i)
+       = 1 - \frac{1}{n}\sum_{i=0}^{n-1}\hat{S}(\boldsymbol{u}_i)
        \label{eq:f7}
 \end{align}
-where $\boldsymbol{\xi}_i$ encodes terrain features (slope, roughness, obstacle
-density, clearance), $\hat{E}$ is the surrogate energy prediction
-(Section~\ref{sec:surrogate}), $S \in [0,1]$ is a stability score derived from
-predicted lateral acceleration and wheel-slip indicators, and
+where $\boldsymbol{u}_i = [x_i,y_i,\theta_i,v_i,\omega_i,\boldsymbol{\xi}_i,l_{\mathrm{path},i}]^\top$
+is the 11-dimensional surrogate input (Eq.~\ref{eq:surrogate_input}),
+$\hat{E}(\boldsymbol{u}_i) \ge 0$ is the predicted average power and
+$\hat{S}(\boldsymbol{u}_i) \in [0,1]$ is the predicted stability score,
+both outputs of the compact neural surrogate (Section~\ref{sec:surrogate}),
+$\boldsymbol{\xi}_i$ encodes terrain features (slope, roughness, obstacle
+density, clearance), $l_{\mathrm{path},i}$ is the segment path length, and
 $\boldsymbol{\Sigma}_{\mathrm{pos}}$ is the position covariance estimated by the
 Unscented Kalman Filter localization module.
 
@@ -476,24 +479,26 @@ observe $G_{\mathrm{warm}} = 12$ vs. $G_{\mathrm{cold}} = 30$ generations
 \label{sec:surrogate}
 
 \textbf{Surrogate architecture.}
-The energy objective $f_6 = E(\mathcal{P})$ from~\eqref{eq:f6} is the only
-computationally expensive component of the fitness vector.
-We replace full simulation with a compact feedforward neural network
-$\hat{E}: \mathbb{R}^{10} \to \mathbb{R}_{\ge 0}$ mapping a 10-dimensional
-segment feature vector $\boldsymbol{u}$ to predicted energy rate (J/m):
+The energy and stability objectives $f_6$ and $f_7$
+from~\eqref{eq:f6}--\eqref{eq:f7} are the computationally expensive components
+of the fitness vector.
+We replace full simulation with a compact feedforward neural network surrogate
+that jointly predicts average power $\hat{E}(\boldsymbol{u}) \ge 0$\,(W) and
+stability score $\hat{S}(\boldsymbol{u}) \in [0,1]$ from an 11-dimensional
+segment feature vector $\boldsymbol{u}$:
 \begin{equation}
   \boldsymbol{u} = [x,\,y,\,\theta,\,v,\,\omega,\,\alpha_{\mathrm{slope}},\,
   \rho_{\mathrm{rough}},\,\rho_{\mathrm{obs}},\,d_{\mathrm{clear}},\,
-  \tau_{\mathrm{terrain}}]^\top
+  \tau_{\mathrm{terrain}},\,l_{\mathrm{path}}]^\top
   \label{eq:surrogate_input}
 \end{equation}
 The architecture uses three hidden layers with tanh activations:
-$\mathbb{R}^{10} \xrightarrow{64} \xrightarrow{64} \xrightarrow{32} \mathbb{R}^1$.
-Non-negativity of the output is enforced via ReLU applied to the final
-linear layer.
-The stability score $S$ appearing in $f_7$ is computed analytically from
-$v$ and $\alpha_{\mathrm{slope}}$ via a lightweight closed-form expression,
-adding negligible evaluation overhead.
+$\mathbb{R}^{11} \xrightarrow{128} \xrightarrow{128} \xrightarrow{64} \mathbb{R}^2$.
+Physical plausibility is enforced architecturally: a ReLU gate on the power
+output head ensures $\hat{E} \ge 0$ (non-negativity of power), and a sigmoid
+on the stability head ensures $\hat{S} \in [0,1]$---without any physics loss
+term. Both objectives $f_6$ and $f_7$ are evaluated using a single forward
+pass of the surrogate.
 
 \textbf{Training.}
 The surrogate is trained offline on 50,000 trajectory segments generated
@@ -502,12 +507,17 @@ carpet, uphill/downhill slopes at $5^\circ$--$10^\circ$, rough grass),
 linear velocities $v \in [0.1,1.5]$\,m/s, angular velocities
 $\omega \in [-2.0,2.0]$\,rad/s, and obstacle densities $\rho_{\mathrm{obs}}
 \in [0,0.9]$.
-Training minimizes mean-squared error on energy labels:
+Training minimizes mean-squared error over both output targets:
 \begin{equation}
-  \mathcal{L} = \frac{1}{N}\sum_{i=1}^N \bigl(E_i - \hat{E}(\boldsymbol{u}_i)\bigr)^2
+  \mathcal{L} = \frac{1}{N}\sum_{i=1}^N
+  \bigl\|\mathbf{y}_i - \hat{\mathbf{y}}(\boldsymbol{u}_i)\bigr\|^2
   \label{eq:surrogate_loss}
 \end{equation}
-using the Adam optimizer ($\eta=10^{-3}$, weight decay $10^{-5}$),
+where $\mathbf{y}_i = [P_{\mathrm{avg},i},\,S_i]^\top$ is the target vector
+of average power (W) and stability score for segment $i$.
+No physics loss terms are used; physical plausibility is enforced
+architecturally via the output-layer ReLU and sigmoid constraints.
+Training uses the Adam optimizer ($\eta=10^{-3}$, weight decay $10^{-5}$),
 batch size 64, ReduceLROnPlateau scheduler (patience 10, factor 0.5),
 and early stopping (patience 20 epochs, maximum 200 epochs).
 On the held-out 20\% test split, the surrogate achieves
