@@ -521,7 +521,9 @@ Training uses the Adam optimizer ($\eta=10^{-3}$, weight decay $10^{-5}$),
 batch size 64, ReduceLROnPlateau scheduler (patience 10, factor 0.5),
 and early stopping (patience 20 epochs, maximum 200 epochs).
 On the held-out 20\% test split, the surrogate achieves
-mean absolute percentage error (MAPE) of 8.73\% and $R^2 = 0.921$.
+mean absolute percentage error (MAPE) of 8.73\% and $R^2 = 0.921$ on the
+primary power-prediction output ($\hat{E}$), with the stability output
+($\hat{S}$) achieving $R^2 = 0.904$.
 
 \textbf{Speedup and Pareto quality trade-off.}
 The surrogate inference time is $t_{\hat{E}} = 0.34$\,ms per query
